@@ -31,6 +31,10 @@ To bump version
 
     mvn versions:set -DnewVersion=2.4.0-Neptune
 
+To package
+
+    ./dev/make-distribution.sh --tgz -Phadoop-2.7
+
 (You do not need to do this if you downloaded a pre-built package.)
 
 You can build Spark using more than one thread by using the -T option with Maven, see ["Parallel builds in Maven 3"](https://cwiki.apache.org/confluence/display/MAVEN/Parallel+builds+in+Maven+3).
