@@ -35,6 +35,13 @@ To package
 
     ./dev/make-distribution.sh --tgz -Phadoop-2.7
 
+Continuous compilation (core package)
+    
+    $ ./build/mvn install
+    $ cd core
+    $ ../build/mvn scala:cc
+
+
 (You do not need to do this if you downloaded a pre-built package.)
 
 You can build Spark using more than one thread by using the -T option with Maven, see ["Parallel builds in Maven 3"](https://cwiki.apache.org/confluence/display/MAVEN/Parallel+builds+in+Maven+3).
