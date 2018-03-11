@@ -31,5 +31,11 @@ private[spark] class TaskSet(
     val properties: Properties) {
   val id: String = stageId + "." + stageAttemptId
 
+  // slice TaskSet into **Num** sub-TaskSets (increasing parallelism)
+  def slice(Num: Int): Array[TaskSet] = {
+    tasks.grouped(Num).map(taskSlice =>
+      new TaskSet(taskSlice, stageId, stageAttemptId, priority, properties)).toArray
+  }
+
   override def toString: String = "TaskSet " + id
 }
