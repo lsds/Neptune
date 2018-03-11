@@ -425,6 +425,20 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
    */
   def getAppId: String = get("spark.app.id")
 
+  /**
+    * Neptune Extra conf
+    */
+  def enableNeptune(nschedulers: Int): Unit = {
+    set("spark.neptune", s"$nschedulers")
+  }
+
+  def getDistScheduling: Boolean = {
+    getOption("spark.neptune") match {
+      case Some(n) => true
+      case None => false
+    }
+  }
+
   /** Does the configuration contain a given parameter? */
   def contains(key: String): Boolean = {
     settings.containsKey(key) ||

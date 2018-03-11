@@ -20,10 +20,11 @@ package org.apache.spark.scheduler
 /**
  *  "FAIR" and "FIFO" determines which policy is used
  *    to order tasks amongst a Schedulable's sub-queues
+ *    NEPTUNE is a custom priotiry based solution
  *  "NONE" is used when the a Schedulable has no sub-queues.
  */
 object SchedulingMode extends Enumeration {
 
   type SchedulingMode = Value
-  val FAIR, FIFO, NONE = Value
+  val FAIR, FIFO, NEPTUNE, NONE = Value
 }
