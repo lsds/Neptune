@@ -53,8 +53,10 @@ private[spark] class Pool(
         new FairSchedulingAlgorithm()
       case SchedulingMode.FIFO =>
         new FIFOSchedulingAlgorithm()
+      case SchedulingMode.NEPTUNE =>
+        new NaptuneSchedulingAlgorithm()
       case _ =>
-        val msg = s"Unsupported scheduling mode: $schedulingMode. Use FAIR or FIFO instead."
+        val msg = s"Unsupported scheduling mode: $schedulingMode. Use FIFO/FAIR or Neptune instead."
         throw new IllegalArgumentException(msg)
     }
   }

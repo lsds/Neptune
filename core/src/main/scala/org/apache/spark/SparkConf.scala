@@ -426,8 +426,8 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
   def getAppId: String = get("spark.app.id")
 
   /**
-    * Neptune Extra conf
-    */
+   * Neptune Extra conf
+   */
   def enableNeptune(nschedulers: Int): Unit = {
     set("spark.neptune", s"$nschedulers")
   }
