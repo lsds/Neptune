@@ -56,6 +56,10 @@ trait Source extends BaseStreamingSource {
    */
   def getBatch(start: Option[Offset], end: Offset): DataFrame
 
+  def getBatch(start: Option[Offset], end: Offset, toAdapt: Boolean): DataFrame = {
+    getBatch(start, end)
+  }
+
   /**
    * Informs the source that Spark has completed processing all data for offsets less than or
    * equal to `end` and will only request offsets greater than `end` in the future.

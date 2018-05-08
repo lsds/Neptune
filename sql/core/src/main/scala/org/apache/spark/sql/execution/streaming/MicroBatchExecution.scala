@@ -112,8 +112,9 @@ class MicroBatchExecution(
   /**
    * Repeatedly attempts to run batches as data arrives.
    */
+  var toadapt = true
   protected def runActivatedStream(sparkSessionForStream: SparkSession): Unit = {
-    triggerExecutor.execute(() => {
+    toadapt = triggerExecutor.execute(() => {
       startTrigger()
 
       if (isActive) {
@@ -129,6 +130,7 @@ class MicroBatchExecution(
           if (dataAvailable) {
             currentStatus = currentStatus.copy(isDataAvailable = true)
             updateStatusMessage("Processing new data")
+            // Change to adaptive
             runBatch(sparkSessionForStream)
           }
         }
@@ -212,6 +214,7 @@ class MicroBatchExecution(
               availableOffsets.foreach {
                 case (source: Source, end: Offset) =>
                   val start = committedOffsets.get(source)
+                  // One call Here - probably not needed (?)
                   source.getBatch(start, end)
                 case nonV1Tuple =>
                   // The V2 API does not have the same edge case requiring getBatch to be called
@@ -390,7 +393,7 @@ class MicroBatchExecution(
         case (source: Source, available)
           if committedOffsets.get(source).map(_ != available).getOrElse(true) =>
           val current = committedOffsets.get(source)
-          val batch = source.getBatch(current, available)
+          val batch = source.getBatch(current, available, toadapt)
           assert(batch.isStreaming,
             s"DataFrame returned by getBatch from $source did not have isStreaming=true\n" +
               s"${batch.queryExecution.logical}")

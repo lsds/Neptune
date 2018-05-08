@@ -26,7 +26,7 @@ trait TriggerExecutor {
   /**
    * Execute batches using `batchRunner`. If `batchRunner` runs `false`, terminate the execution.
    */
-  def execute(batchRunner: () => Boolean): Unit
+  def execute(batchRunner: () => Boolean): Boolean
 }
 
 /**
@@ -37,7 +37,7 @@ case class OneTimeExecutor() extends TriggerExecutor {
   /**
    * Execute a single batch using `batchRunner`.
    */
-  override def execute(batchRunner: () => Boolean): Unit = batchRunner()
+  override def execute(batchRunner: () => Boolean): Boolean = batchRunner()
 }
 
 /**
@@ -49,7 +49,8 @@ case class ProcessingTimeExecutor(processingTime: ProcessingTime, clock: Clock =
   private val intervalMs = processingTime.intervalMs
   require(intervalMs >= 0)
 
-  override def execute(triggerHandler: () => Boolean): Unit = {
+  override def execute(triggerHandler: () => Boolean): Boolean = {
+    var toAdapt = false
     while (true) {
       val triggerTimeMs = clock.getTimeMillis
       val nextTriggerTimeMs = nextBatchTime(triggerTimeMs)
@@ -58,23 +59,26 @@ case class ProcessingTimeExecutor(processingTime: ProcessingTime, clock: Clock =
         val batchElapsedTimeMs = clock.getTimeMillis - triggerTimeMs
         if (batchElapsedTimeMs > intervalMs) {
           notifyBatchFallingBehind(batchElapsedTimeMs)
+          toAdapt = true
         }
         if (terminated) {
-          return
+          return toAdapt
         }
         clock.waitTillTime(nextTriggerTimeMs)
       } else {
         if (terminated) {
-          return
+          return toAdapt
         }
       }
     }
+    toAdapt
   }
 
   /** Called when a batch falls behind */
   def notifyBatchFallingBehind(realElapsedTimeMs: Long): Unit = {
     logWarning("Current batch is falling behind. The trigger interval is " +
       s"${intervalMs} milliseconds, but spent ${realElapsedTimeMs} milliseconds")
+    logWarning("Going to adapt parallelism!")
   }
 
   /**

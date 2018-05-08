@@ -152,6 +152,12 @@ class FileStreamSource(
   /** Return the latest offset in the [[FileStreamSourceLog]] */
   def currentLogOffset: Long = synchronized { metadataLogCurrentOffset }
 
+  override def getBatch(start: Option[Offset], end: Offset, toAdapt: Boolean): DataFrame = {
+    log.warn(s"Adaptive partitioning not Implemented yet for: ${toString}")
+    getBatch(start, end)
+  }
+
+
   /**
    * Returns the data that is between the offsets (`start`, `end`].
    */

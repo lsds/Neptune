@@ -568,6 +568,11 @@ class StreamingAggregationSuite extends StateStoreMetricsTest
       if (counter == 0) None else Some(LongOffset(counter))
     }
 
+    override def getBatch(s: Option[Offset], e: Offset, toAdapt: Boolean): DataFrame = {
+      log.warn(s"Adaptive partitioning not Implemented yet for: ${toString}")
+      getBatch(s, e)
+    }
+
     override def getBatch(start: Option[Offset], end: Offset): DataFrame = synchronized {
       val rdd = new BlockRDD[Int](spark.sparkContext, blocks.toArray)
         .map(i => InternalRow(i)) // we don't really care about the values in this test

@@ -197,6 +197,11 @@ private[kafka010] class KafkaSource(
     }
   }
 
+  override def getBatch(start: Option[Offset], end: Offset, toAdapt: Boolean): DataFrame = {
+    log.warn(s"Adaptive partitioning not Implemented yet for: ${toString}")
+    getBatch(start, end)
+  }
+
   /**
    * Returns the data that is between the offsets
    * [`start.get.partitionToOffsets`, `end.partitionToOffsets`), i.e. end.partitionToOffsets is

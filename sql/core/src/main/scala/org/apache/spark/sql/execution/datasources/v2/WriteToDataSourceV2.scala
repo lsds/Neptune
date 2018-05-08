@@ -57,6 +57,7 @@ case class WriteToDataSourceV2Exec(writer: DataSourceV2Writer, query: SparkPlan)
     val rdd = query.execute()
     val messages = new Array[WriterCommitMessage](rdd.partitions.length)
 
+    logWarning(s"Writer rdd partitions ${rdd.partitions.length} : ${rdd.getNumPartitions}")
     logInfo(s"Start processing data source writer: $writer. " +
       s"The input RDD has ${messages.length} partitions.")
 
