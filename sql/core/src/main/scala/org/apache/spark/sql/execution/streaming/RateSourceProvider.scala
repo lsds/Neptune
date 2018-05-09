@@ -197,12 +197,10 @@ class RateStreamSource(
     }
     Some(LongOffset(TimeUnit.MILLISECONDS.toSeconds(lastTimeMs - startTimeMs)))
   }
-  var hasAdaptedOnce = false
   override def getBatch(start: Option[Offset], end: Offset, toAdapt: Boolean): DataFrame = {
-    if (toAdapt && !hasAdaptedOnce) {
+    if (toAdapt) {
+      logWarning(s"Adapting Source parallelism from ${parallelism} to ${parallelism*2}")
       parallelism *= 2
-      hasAdaptedOnce = true
-      logWarning(s"Adapting parallelism to ${parallelism}")
     }
     logWarning(s"Partitions: ${parallelism}")
     getBatch(start, end)

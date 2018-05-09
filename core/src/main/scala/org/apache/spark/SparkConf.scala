@@ -426,16 +426,39 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
   def getAppId: String = get("spark.app.id")
 
   /**
-   * Neptune Extra conf
+   * Neptune Project Extra configuration
    */
-  def enableNeptune(nschedulers: Int): Unit = {
-    set("spark.neptune", s"$nschedulers")
+  def enableAdaptiveTasks(): Unit = {
+    set("spark.neptune.tasks.adaptive", true.toString)
   }
 
-  def getDistScheduling: Boolean = {
-    getOption("spark.neptune") match {
+  def disableAdaptiveTasks(): Unit = {
+    set("spark.neptune.tasks.adaptive", false.toString)
+  }
+
+  def isAdaptiveTasksEnabled(): Boolean = {
+    getOption("spark.neptune.tasks.adaptive") match {
+      case Some("true") => true
+      case Some("false") => false
+      case None => false
+    }
+  }
+
+  def enableTwoLevelScheduling(nschedulers: Int): Unit = {
+    set("spark.neptune.schedulers", s"$nschedulers")
+  }
+
+  def isTwoLevelSchedulingEnabled: Boolean = {
+    getOption("spark.neptune.schedulers") match {
       case Some(n) => true
       case None => false
+    }
+  }
+
+  def getTwoLevelSchedulingNum(): Int = {
+    getOption("spark.neptune.schedulers") match {
+      case Some(n) => n.toInt
+      case None => 0
     }
   }
 
