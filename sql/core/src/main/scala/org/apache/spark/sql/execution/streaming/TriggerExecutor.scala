@@ -23,6 +23,7 @@ import org.apache.spark.util.{Clock, SystemClock}
 
 trait TriggerExecutor {
 
+  @volatile var lateBatch = 0
   /**
    * Execute batches using `batchRunner`. If `batchRunner` runs `false`, terminate the execution.
    */
@@ -50,7 +51,7 @@ case class ProcessingTimeExecutor(processingTime: ProcessingTime, clock: Clock =
   require(intervalMs >= 0)
 
   override def execute(triggerHandler: () => Boolean): Boolean = {
-    var toAdapt = false
+    lateBatch = 0
     while (true) {
       val triggerTimeMs = clock.getTimeMillis
       val nextTriggerTimeMs = nextBatchTime(triggerTimeMs)
@@ -59,26 +60,25 @@ case class ProcessingTimeExecutor(processingTime: ProcessingTime, clock: Clock =
         val batchElapsedTimeMs = clock.getTimeMillis - triggerTimeMs
         if (batchElapsedTimeMs > intervalMs) {
           notifyBatchFallingBehind(batchElapsedTimeMs)
-          toAdapt = true
         }
         if (terminated) {
-          return toAdapt
+          return false
         }
         clock.waitTillTime(nextTriggerTimeMs)
       } else {
         if (terminated) {
-          return toAdapt
+          return false
         }
       }
     }
-    toAdapt
+    false
   }
 
   /** Called when a batch falls behind */
   def notifyBatchFallingBehind(realElapsedTimeMs: Long): Unit = {
     logWarning("Current batch is falling behind. The trigger interval is " +
       s"${intervalMs} milliseconds, but spent ${realElapsedTimeMs} milliseconds")
-    logWarning("Going to adapt parallelism!")
+    lateBatch = 1
   }
 
   /**

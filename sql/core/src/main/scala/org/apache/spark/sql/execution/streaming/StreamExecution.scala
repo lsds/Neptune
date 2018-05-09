@@ -251,6 +251,8 @@ abstract class StreamExecution(
         sparkSession.sparkContext.env.metricsSystem.registerSource(streamMetrics)
       }
 
+      // PANOS: Can print StreamingQueryProgress metrics here?
+
       // `postEvent` does not throw non fatal exception.
       postEvent(new QueryStartedEvent(id, runId, name))
 
