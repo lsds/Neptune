@@ -198,14 +198,14 @@ abstract class SchedulerIntegrationSuite[T <: MockBackend: ClassTag] extends Spa
 
   /** models a stage boundary with a single dependency, like a shuffle */
   def shuffle(nParts: Int, input: MockRDD): MockRDD = {
-    val partitioner = new HashPartitioner(nParts)
+    val partitioner = new HashPartitioner(sc.conf, nParts)
     val shuffleDep = new ShuffleDependency[Int, Int, Nothing](input, partitioner)
     new MockRDD(sc, nParts, List(shuffleDep))
   }
 
   /** models a stage boundary with multiple dependencies, like a join */
   def join(nParts: Int, inputs: MockRDD*): MockRDD = {
-    val partitioner = new HashPartitioner(nParts)
+    val partitioner = new HashPartitioner(sc.conf, nParts)
     val shuffleDeps = inputs.map { inputRDD =>
       new ShuffleDependency[Int, Int, Nothing](inputRDD, partitioner)
     }

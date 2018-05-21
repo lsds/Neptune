@@ -253,7 +253,7 @@ case class StateSpecImpl[K, V, S, T](
   }
 
   override def numPartitions(numPartitions: Int): this.type = {
-    this.partitioner(new HashPartitioner(numPartitions))
+    this.partitioner(new HashPartitioner(this.initialStateRDD.context.conf, numPartitions))
     this
   }
 

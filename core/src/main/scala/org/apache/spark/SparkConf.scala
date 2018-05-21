@@ -444,6 +444,18 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
     }
   }
 
+  def neptuneSetPartitionSize(npartitions: Int): Unit = {
+    set("spark.neptune.partition.size", s"$npartitions")
+  }
+
+  def neptuneGetPartitionSize(): Int = {
+    getOption("spark.neptune.partition.size").map(_.toInt).getOrElse(0)
+  }
+
+  def neptunePartitionEnabled(): Boolean = {
+    neptuneGetPartitionSize() > 0
+  }
+
   def enableTwoLevelScheduling(nschedulers: Int): Unit = {
     set("spark.neptune.schedulers", s"$nschedulers")
   }

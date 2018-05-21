@@ -212,7 +212,7 @@ class FPGrowth private (
     val count = data.count()
     val minCount = math.ceil(minSupport * count).toLong
     val numParts = if (numPartitions > 0) numPartitions else data.partitions.length
-    val partitioner = new HashPartitioner(numParts)
+    val partitioner = new HashPartitioner(data.context.conf, numParts)
     val freqItems = genFreqItems(data, minCount, partitioner)
     val freqItemsets = genFreqItemsets(data, minCount, freqItems, partitioner)
     new FPGrowthModel(freqItemsets)

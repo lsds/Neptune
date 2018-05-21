@@ -77,7 +77,8 @@ private object ImplicitOrderingSuite {
            "rdd.groupBy(x => new OrderedClass).keyOrdering.isDefined"),
          (rdd.groupBy((x: Int) => x, 5).keyOrdering.isDefined,
            "rdd.groupBy((x: Int) => x, 5).keyOrdering.isDefined"),
-         (rdd.groupBy((x: Int) => x, new HashPartitioner(5)).keyOrdering.isDefined,
+         (rdd.groupBy((x: Int) => x, new HashPartitioner(
+           rdd.context.conf, 5)).keyOrdering.isDefined,
            "rdd.groupBy((x: Int) => x, new HashPartitioner(5)).keyOrdering.isDefined"))
   }
 }

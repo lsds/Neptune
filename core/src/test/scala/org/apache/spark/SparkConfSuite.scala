@@ -112,18 +112,25 @@ class SparkConfSuite extends SparkFunSuite with LocalSparkContext with ResetSyst
   test("test Neptune conf") {
     val conf = new SparkConf(false)
     assert(conf.getAll.toSet === Set())
-    // Disabled by default
+    // Adaptive Disabled by default
     assert(conf.isAdaptiveTasksEnabled() === false)
     conf.enableAdaptiveTasks()
     assert(conf.isAdaptiveTasksEnabled() === true)
     conf.disableAdaptiveTasks()
     assert(conf.isAdaptiveTasksEnabled() === false)
 
-    // Disabled by default
+    // Two-Level Disabled by default
     assert(conf.isTwoLevelSchedulingEnabled === false)
     conf.enableTwoLevelScheduling(5)
     assert(conf.isTwoLevelSchedulingEnabled === true)
     assert(conf.getTwoLevelSchedulingNum() === 5)
+
+    // PartitionSize Disabled by default
+    assert(conf.neptunePartitionEnabled() === false)
+    conf.neptuneSetPartitionSize(5)
+    assert(conf.neptuneGetPartitionSize() === 5)
+    conf.neptuneSetPartitionSize(10)
+    assert(conf.neptuneGetPartitionSize() === 10)
   }
 
   test("creating SparkContext without master and app name") {

@@ -109,7 +109,7 @@ class InternalMapWithStateDStream[K: ClassTag, V: ClassTag, S: ClassTag, E: Clas
   persist(StorageLevel.MEMORY_ONLY)
 
   private val partitioner = spec.getPartitioner().getOrElse(
-    new HashPartitioner(ssc.sc.defaultParallelism))
+    new HashPartitioner(ssc.sc.conf, ssc.sc.defaultParallelism))
 
   private val mappingFunction = spec.getFunction()
 

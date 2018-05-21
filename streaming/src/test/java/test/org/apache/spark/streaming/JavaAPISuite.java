@@ -985,7 +985,7 @@ public class JavaAPISuite extends LocalJavaStreamingContext implements Serializa
     JavaPairDStream<String, Integer> pairStream = JavaPairDStream.fromJavaDStream(stream);
 
     JavaPairDStream<String, Integer> combined = pairStream.combineByKey(
-        i -> i, new IntegerSum(), new IntegerSum(), new HashPartitioner(2));
+        i -> i, new IntegerSum(), new IntegerSum(), new HashPartitioner(ssc.sparkContext().getConf(), 2));
 
     JavaTestUtils.attachTestOutputStream(combined);
     List<List<Tuple2<String, Integer>>> result = JavaTestUtils.runStreams(ssc, 2, 2);
@@ -1158,7 +1158,7 @@ public class JavaAPISuite extends LocalJavaStreamingContext implements Serializa
           out += v;
         }
         return Optional.of(out);
-      }, new HashPartitioner(1), initialRDD);
+      }, new HashPartitioner(ssc.sparkContext().getConf(), 1), initialRDD);
     JavaTestUtils.attachTestOutputStream(updated);
     List<List<Tuple2<String, Integer>>> result = JavaTestUtils.runStreams(ssc, 3, 3);
 

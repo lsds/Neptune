@@ -364,15 +364,15 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
    */
   test("[SPARK-13902] Ensure no duplicate stages are created") {
     val rddA = new MyRDD(sc, 1, Nil)
-    val shuffleDepA = new ShuffleDependency(rddA, new HashPartitioner(1))
+    val shuffleDepA = new ShuffleDependency(rddA, new HashPartitioner(rddA.context.conf, 1))
     val s_A = shuffleDepA.shuffleId
 
     val rddB = new MyRDD(sc, 1, List(shuffleDepA), tracker = mapOutputTracker)
-    val shuffleDepB = new ShuffleDependency(rddB, new HashPartitioner(1))
+    val shuffleDepB = new ShuffleDependency(rddB, new HashPartitioner(rddB.context.conf, 1))
     val s_B = shuffleDepB.shuffleId
 
     val rddC = new MyRDD(sc, 1, List(shuffleDepA, shuffleDepB), tracker = mapOutputTracker)
-    val shuffleDepC = new ShuffleDependency(rddC, new HashPartitioner(1))
+    val shuffleDepC = new ShuffleDependency(rddC, new HashPartitioner(rddC.context.conf, 1))
     val s_C = shuffleDepC.shuffleId
 
     val rddD = new MyRDD(sc, 1, List(shuffleDepC), tracker = mapOutputTracker)
@@ -411,10 +411,12 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
     runEvent(ExecutorAdded("exec-hostA2", "hostA"))
     runEvent(ExecutorAdded("exec-hostB", "hostB"))
     val firstRDD = new MyRDD(sc, 3, Nil)
-    val firstShuffleDep = new ShuffleDependency(firstRDD, new HashPartitioner(3))
+    val firstShuffleDep = new ShuffleDependency(firstRDD,
+      new HashPartitioner(firstRDD.context.conf, 3))
     val firstShuffleId = firstShuffleDep.shuffleId
     val shuffleMapRdd = new MyRDD(sc, 3, List(firstShuffleDep))
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(3))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd,
+      new HashPartitioner(shuffleMapRdd.context.conf, 3))
     val secondShuffleId = shuffleDep.shuffleId
     val reduceRdd = new MyRDD(sc, 1, List(shuffleDep))
     submit(reduceRdd, Array(0))
@@ -551,7 +553,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
    */
   test("getMissingParentStages should consider all ancestor RDDs' cache statuses") {
     val rddA = new MyRDD(sc, 1, Nil)
-    val rddB = new MyRDD(sc, 1, List(new ShuffleDependency(rddA, new HashPartitioner(1))),
+    val rddB = new MyRDD(sc, 1, List(new ShuffleDependency(rddA, new HashPartitioner(sc.conf, 1))),
       tracker = mapOutputTracker)
     val rddC = new MyRDD(sc, 1, List(new OneToOneDependency(rddB))).cache()
     val rddD = new MyRDD(sc, 1, List(new OneToOneDependency(rddC)))
@@ -664,7 +666,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
 
   test("run trivial shuffle") {
     val shuffleMapRdd = new MyRDD(sc, 2, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(1))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 1))
     val shuffleId = shuffleDep.shuffleId
     val reduceRdd = new MyRDD(sc, 1, List(shuffleDep), tracker = mapOutputTracker)
     submit(reduceRdd, Array(0))
@@ -680,7 +682,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
 
   test("run trivial shuffle with fetch failure") {
     val shuffleMapRdd = new MyRDD(sc, 2, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(2))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 2))
     val shuffleId = shuffleDep.shuffleId
     val reduceRdd = new MyRDD(sc, 2, List(shuffleDep), tracker = mapOutputTracker)
     submit(reduceRdd, Array(0, 1))
@@ -727,7 +729,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
       assert(sc.env.blockManager.externalShuffleServiceEnabled == shuffleServiceOn)
 
       val shuffleMapRdd = new MyRDD(sc, 2, Nil)
-      val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(1))
+      val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 1))
       val shuffleId = shuffleDep.shuffleId
       val reduceRdd = new MyRDD(sc, 1, List(shuffleDep), tracker = mapOutputTracker)
       submit(reduceRdd, Array(0))
@@ -841,7 +843,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
 
     val parts = 8
     val shuffleMapRdd = new MyRDD(sc, parts, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(parts))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, parts))
     val reduceRdd = new MyRDD(sc, parts, List(shuffleDep), tracker = mapOutputTracker)
     submit(reduceRdd, (0 until parts).toArray)
 
@@ -875,7 +877,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
     setupStageAbortTest(sc)
 
     val shuffleMapRdd = new MyRDD(sc, 2, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(2))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 2))
     val reduceRdd = new MyRDD(sc, 2, List(shuffleDep), tracker = mapOutputTracker)
     submit(reduceRdd, Array(0, 1))
 
@@ -917,9 +919,9 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
     setupStageAbortTest(sc)
 
     val shuffleOneRdd = new MyRDD(sc, 2, Nil).cache()
-    val shuffleDepOne = new ShuffleDependency(shuffleOneRdd, new HashPartitioner(2))
+    val shuffleDepOne = new ShuffleDependency(shuffleOneRdd, new HashPartitioner(sc.conf, 2))
     val shuffleTwoRdd = new MyRDD(sc, 2, List(shuffleDepOne), tracker = mapOutputTracker).cache()
-    val shuffleDepTwo = new ShuffleDependency(shuffleTwoRdd, new HashPartitioner(1))
+    val shuffleDepTwo = new ShuffleDependency(shuffleTwoRdd, new HashPartitioner(sc.conf, 1))
     val finalRdd = new MyRDD(sc, 1, List(shuffleDepTwo), tracker = mapOutputTracker)
     submit(finalRdd, Array(0))
 
@@ -966,9 +968,9 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
     setupStageAbortTest(sc)
 
     val shuffleOneRdd = new MyRDD(sc, 2, Nil).cache()
-    val shuffleDepOne = new ShuffleDependency(shuffleOneRdd, new HashPartitioner(2))
+    val shuffleDepOne = new ShuffleDependency(shuffleOneRdd, new HashPartitioner(sc.conf, 2))
     val shuffleTwoRdd = new MyRDD(sc, 2, List(shuffleDepOne), tracker = mapOutputTracker).cache()
-    val shuffleDepTwo = new ShuffleDependency(shuffleTwoRdd, new HashPartitioner(1))
+    val shuffleDepTwo = new ShuffleDependency(shuffleTwoRdd, new HashPartitioner(sc.conf, 1))
     val finalRdd = new MyRDD(sc, 1, List(shuffleDepTwo), tracker = mapOutputTracker)
     submit(finalRdd, Array(0))
 
@@ -1026,7 +1028,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
 
   test("trivial shuffle with multiple fetch failures") {
     val shuffleMapRdd = new MyRDD(sc, 2, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(2))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 2))
     val shuffleId = shuffleDep.shuffleId
     val reduceRdd = new MyRDD(sc, 2, List(shuffleDep), tracker = mapOutputTracker)
     submit(reduceRdd, Array(0, 1))
@@ -1061,7 +1063,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
    */
   test("late fetch failures don't cause multiple concurrent attempts for the same map stage") {
     val shuffleMapRdd = new MyRDD(sc, 2, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(2))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 2))
     val shuffleId = shuffleDep.shuffleId
     val reduceRdd = new MyRDD(sc, 2, List(shuffleDep), tracker = mapOutputTracker)
     submit(reduceRdd, Array(0, 1))
@@ -1123,7 +1125,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
   test("extremely late fetch failures don't cause multiple concurrent attempts for " +
     "the same stage") {
     val shuffleMapRdd = new MyRDD(sc, 2, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(2))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 2))
     val shuffleId = shuffleDep.shuffleId
     val reduceRdd = new MyRDD(sc, 2, List(shuffleDep), tracker = mapOutputTracker)
     submit(reduceRdd, Array(0, 1))
@@ -1226,7 +1228,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
 
   test("ignore late map task completions") {
     val shuffleMapRdd = new MyRDD(sc, 2, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(2))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 2))
     val shuffleId = shuffleDep.shuffleId
     val reduceRdd = new MyRDD(sc, 2, List(shuffleDep), tracker = mapOutputTracker)
     submit(reduceRdd, Array(0, 1))
@@ -1283,7 +1285,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
 
   test("run shuffle with map stage failure") {
     val shuffleMapRdd = new MyRDD(sc, 2, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(2))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 2))
     val reduceRdd = new MyRDD(sc, 2, List(shuffleDep), tracker = mapOutputTracker)
     submit(reduceRdd, Array(0, 1))
 
@@ -1310,7 +1312,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
     // Run the first job successfully, which creates one shuffle dependency
 
     val shuffleMapRdd = new MyRDD(sc, 2, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(2))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 2))
     val reduceRdd = new MyRDD(sc, 2, List(shuffleDep))
     submit(reduceRdd, Array(0, 1))
 
@@ -1349,10 +1351,10 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
    */
   test("don't submit stage until its dependencies map outputs are registered (SPARK-5259)") {
     val firstRDD = new MyRDD(sc, 3, Nil)
-    val firstShuffleDep = new ShuffleDependency(firstRDD, new HashPartitioner(3))
+    val firstShuffleDep = new ShuffleDependency(firstRDD, new HashPartitioner(sc.conf, 3))
     val firstShuffleId = firstShuffleDep.shuffleId
     val shuffleMapRdd = new MyRDD(sc, 3, List(firstShuffleDep))
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(1))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 1))
     val reduceRdd = new MyRDD(sc, 1, List(shuffleDep))
     submit(reduceRdd, Array(0))
 
@@ -1447,7 +1449,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
    */
   test("register map outputs correctly after ExecutorLost and task Resubmitted") {
     val firstRDD = new MyRDD(sc, 3, Nil)
-    val firstShuffleDep = new ShuffleDependency(firstRDD, new HashPartitioner(2))
+    val firstShuffleDep = new ShuffleDependency(firstRDD, new HashPartitioner(sc.conf, 2))
     val reduceRdd = new MyRDD(sc, 5, List(firstShuffleDep))
     submit(reduceRdd, Array(0))
 
@@ -1512,9 +1514,9 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
    */
   test("failure of stage used by two jobs") {
     val shuffleMapRdd1 = new MyRDD(sc, 2, Nil)
-    val shuffleDep1 = new ShuffleDependency(shuffleMapRdd1, new HashPartitioner(2))
+    val shuffleDep1 = new ShuffleDependency(shuffleMapRdd1, new HashPartitioner(sc.conf, 2))
     val shuffleMapRdd2 = new MyRDD(sc, 2, Nil)
-    val shuffleDep2 = new ShuffleDependency(shuffleMapRdd2, new HashPartitioner(2))
+    val shuffleDep2 = new ShuffleDependency(shuffleMapRdd2, new HashPartitioner(sc.conf, 2))
 
     val reduceRdd1 = new MyRDD(sc, 2, List(shuffleDep1), tracker = mapOutputTracker)
     val reduceRdd2 = new MyRDD(sc, 2, List(shuffleDep1, shuffleDep2), tracker = mapOutputTracker)
@@ -1555,9 +1557,9 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
 
   def launchJobsThatShareStageAndCancelFirst(): ShuffleDependency[Int, Int, Nothing] = {
     val baseRdd = new MyRDD(sc, 1, Nil)
-    val shuffleDep1 = new ShuffleDependency(baseRdd, new HashPartitioner(1))
+    val shuffleDep1 = new ShuffleDependency(baseRdd, new HashPartitioner(sc.conf, 1))
     val intermediateRdd = new MyRDD(sc, 1, List(shuffleDep1))
-    val shuffleDep2 = new ShuffleDependency(intermediateRdd, new HashPartitioner(1))
+    val shuffleDep2 = new ShuffleDependency(intermediateRdd, new HashPartitioner(sc.conf, 1))
     val finalRdd1 = new MyRDD(sc, 1, List(shuffleDep2))
     val finalRdd2 = new MyRDD(sc, 1, List(shuffleDep2))
     val job1Properties = new Properties()
@@ -1655,7 +1657,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
    */
   test("run trivial shuffle with out-of-band executor failure and retry") {
     val shuffleMapRdd = new MyRDD(sc, 2, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(1))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 1))
     val shuffleId = shuffleDep.shuffleId
     val reduceRdd = new MyRDD(sc, 1, List(shuffleDep), tracker = mapOutputTracker)
     submit(reduceRdd, Array(0))
@@ -1693,9 +1695,9 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
 
   test("recursive shuffle failures") {
     val shuffleOneRdd = new MyRDD(sc, 2, Nil)
-    val shuffleDepOne = new ShuffleDependency(shuffleOneRdd, new HashPartitioner(2))
+    val shuffleDepOne = new ShuffleDependency(shuffleOneRdd, new HashPartitioner(sc.conf, 2))
     val shuffleTwoRdd = new MyRDD(sc, 2, List(shuffleDepOne), tracker = mapOutputTracker)
-    val shuffleDepTwo = new ShuffleDependency(shuffleTwoRdd, new HashPartitioner(1))
+    val shuffleDepTwo = new ShuffleDependency(shuffleTwoRdd, new HashPartitioner(sc.conf, 1))
     val finalRdd = new MyRDD(sc, 1, List(shuffleDepTwo), tracker = mapOutputTracker)
     submit(finalRdd, Array(0))
     // have the first stage complete normally
@@ -1722,9 +1724,9 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
 
   test("cached post-shuffle") {
     val shuffleOneRdd = new MyRDD(sc, 2, Nil).cache()
-    val shuffleDepOne = new ShuffleDependency(shuffleOneRdd, new HashPartitioner(2))
+    val shuffleDepOne = new ShuffleDependency(shuffleOneRdd, new HashPartitioner(sc.conf, 2))
     val shuffleTwoRdd = new MyRDD(sc, 2, List(shuffleDepOne), tracker = mapOutputTracker).cache()
-    val shuffleDepTwo = new ShuffleDependency(shuffleTwoRdd, new HashPartitioner(1))
+    val shuffleDepTwo = new ShuffleDependency(shuffleTwoRdd, new HashPartitioner(sc.conf, 1))
     val finalRdd = new MyRDD(sc, 1, List(shuffleDepTwo), tracker = mapOutputTracker)
     submit(finalRdd, Array(0))
     cacheLocations(shuffleTwoRdd.id -> 0) = Seq(makeBlockManagerId("hostD"))
@@ -1883,7 +1885,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
   test("reduce tasks should be placed locally with map output") {
     // Create a shuffleMapRdd with 1 partition
     val shuffleMapRdd = new MyRDD(sc, 1, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(1))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 1))
     val shuffleId = shuffleDep.shuffleId
     val reduceRdd = new MyRDD(sc, 1, List(shuffleDep), tracker = mapOutputTracker)
     submit(reduceRdd, Array(0))
@@ -1904,7 +1906,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
     val numMapTasks = 4
     // Create a shuffleMapRdd with more partitions
     val shuffleMapRdd = new MyRDD(sc, numMapTasks, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(1))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 1))
     val shuffleId = shuffleDep.shuffleId
     val reduceRdd = new MyRDD(sc, 1, List(shuffleDep), tracker = mapOutputTracker)
     submit(reduceRdd, Array(0))
@@ -1928,7 +1930,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
     // Create an RDD that has both a shuffle dependency and a narrow dependency (e.g. for a join)
     val rdd1 = new MyRDD(sc, 1, Nil)
     val rdd2 = new MyRDD(sc, 1, Nil, locations = Seq(Seq("hostB")))
-    val shuffleDep = new ShuffleDependency(rdd1, new HashPartitioner(1))
+    val shuffleDep = new ShuffleDependency(rdd1, new HashPartitioner(sc.conf, 1))
     val narrowDep = new OneToOneDependency(rdd2)
     val shuffleId = shuffleDep.shuffleId
     val reduceRdd = new MyRDD(sc, 1, List(shuffleDep, narrowDep), tracker = mapOutputTracker)
@@ -1975,7 +1977,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
 
   test("simple map stage submission") {
     val shuffleMapRdd = new MyRDD(sc, 2, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(1))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 1))
     val shuffleId = shuffleDep.shuffleId
     val reduceRdd = new MyRDD(sc, 1, List(shuffleDep), tracker = mapOutputTracker)
 
@@ -2002,7 +2004,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
 
   test("map stage submission with reduce stage also depending on the data") {
     val shuffleMapRdd = new MyRDD(sc, 2, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(1))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 1))
     val shuffleId = shuffleDep.shuffleId
     val reduceRdd = new MyRDD(sc, 1, List(shuffleDep), tracker = mapOutputTracker)
 
@@ -2031,7 +2033,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
 
   test("map stage submission with fetch failure") {
     val shuffleMapRdd = new MyRDD(sc, 2, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(2))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 2))
     val shuffleId = shuffleDep.shuffleId
     val reduceRdd = new MyRDD(sc, 2, List(shuffleDep), tracker = mapOutputTracker)
 
@@ -2081,9 +2083,9 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
    */
   test("map stage submission with multiple shared stages and failures") {
     val rdd1 = new MyRDD(sc, 2, Nil)
-    val dep1 = new ShuffleDependency(rdd1, new HashPartitioner(2))
+    val dep1 = new ShuffleDependency(rdd1, new HashPartitioner(sc.conf, 2))
     val rdd2 = new MyRDD(sc, 2, List(dep1), tracker = mapOutputTracker)
-    val dep2 = new ShuffleDependency(rdd2, new HashPartitioner(2))
+    val dep2 = new ShuffleDependency(rdd2, new HashPartitioner(sc.conf, 2))
     val rdd3 = new MyRDD(sc, 2, List(dep2), tracker = mapOutputTracker)
 
     val listener1 = new SimpleListener
@@ -2158,7 +2160,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
    */
   test("map stage submission with executor failure late map task completions") {
     val shuffleMapRdd = new MyRDD(sc, 3, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(2))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 2))
 
     submitMapStage(shuffleDep)
 
@@ -2228,11 +2230,11 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
    */
   test("getShuffleDependencies correctly returns only direct shuffle parents") {
     val rddA = new MyRDD(sc, 2, Nil)
-    val shuffleDepA = new ShuffleDependency(rddA, new HashPartitioner(1))
+    val shuffleDepA = new ShuffleDependency(rddA, new HashPartitioner(sc.conf, 1))
     val rddB = new MyRDD(sc, 2, Nil)
-    val shuffleDepB = new ShuffleDependency(rddB, new HashPartitioner(1))
+    val shuffleDepB = new ShuffleDependency(rddB, new HashPartitioner(sc.conf, 1))
     val rddC = new MyRDD(sc, 1, List(shuffleDepB))
-    val shuffleDepC = new ShuffleDependency(rddC, new HashPartitioner(1))
+    val shuffleDepC = new ShuffleDependency(rddC, new HashPartitioner(sc.conf, 1))
     val rddD = new MyRDD(sc, 1, List(shuffleDepC))
     val narrowDepD = new OneToOneDependency(rddD)
     val rddE = new MyRDD(sc, 1, List(shuffleDepA, narrowDepD), tracker = mapOutputTracker)
@@ -2303,11 +2305,11 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
       " even with late completions from earlier stage attempts") {
     // Create 3 RDDs with shuffle dependencies on each other: rddA <--- rddB <--- rddC
     val rddA = new MyRDD(sc, 2, Nil)
-    val shuffleDepA = new ShuffleDependency(rddA, new HashPartitioner(2))
+    val shuffleDepA = new ShuffleDependency(rddA, new HashPartitioner(sc.conf, 2))
     val shuffleIdA = shuffleDepA.shuffleId
 
     val rddB = new MyRDD(sc, 2, List(shuffleDepA), tracker = mapOutputTracker)
-    val shuffleDepB = new ShuffleDependency(rddB, new HashPartitioner(2))
+    val shuffleDepB = new ShuffleDependency(rddB, new HashPartitioner(sc.conf, 2))
 
     val rddC = new MyRDD(sc, 2, List(shuffleDepB), tracker = mapOutputTracker)
 

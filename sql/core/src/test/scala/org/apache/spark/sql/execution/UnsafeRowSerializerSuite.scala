@@ -118,7 +118,7 @@ class UnsafeRowSerializerSuite extends SparkFunSuite with LocalSparkContext {
 
       val sorter = new ExternalSorter[Int, UnsafeRow, UnsafeRow](
         taskContext,
-        partitioner = Some(new HashPartitioner(10)),
+        partitioner = Some(new HashPartitioner(sc.conf, 10)),
         serializer = new UnsafeRowSerializer(numFields = 1))
 
       // Ensure we spilled something and have to merge them later

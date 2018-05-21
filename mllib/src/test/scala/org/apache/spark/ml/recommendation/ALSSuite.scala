@@ -528,7 +528,7 @@ class ALSSuite
 
   test("als partitioner is a projection") {
     for (p <- Seq(1, 10, 100, 1000)) {
-      val part = new ALSPartitioner(p)
+      val part = new ALSPartitioner(sc.conf, p)
       var k = 0
       while (k < p) {
         assert(k === part.getPartition(k))

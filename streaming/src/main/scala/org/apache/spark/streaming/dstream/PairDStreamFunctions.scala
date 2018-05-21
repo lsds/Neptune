@@ -42,7 +42,7 @@ class PairDStreamFunctions[K, V](self: DStream[(K, V)])
   private[streaming] def sparkContext = self.context.sparkContext
 
   private[streaming] def defaultPartitioner(numPartitions: Int = self.ssc.sc.defaultParallelism) = {
-    new HashPartitioner(numPartitions)
+    new HashPartitioner(sparkContext.conf, numPartitions)
   }
 
   /**

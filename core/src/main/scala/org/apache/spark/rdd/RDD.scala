@@ -461,7 +461,7 @@ abstract class RDD[T: ClassTag](
       // include a shuffle step so that our upstream tasks are still distributed
       new CoalescedRDD(
         new ShuffledRDD[Int, T, T](mapPartitionsWithIndex(distributePartition),
-        new HashPartitioner(numPartitions)),
+        new HashPartitioner(this.context.conf, numPartitions)),
         numPartitions,
         partitionCoalescer).values
     } else {
@@ -658,7 +658,7 @@ abstract class RDD[T: ClassTag](
    * @param numPartitions How many partitions to use in the resulting RDD
    */
   def intersection(other: RDD[T], numPartitions: Int): RDD[T] = withScope {
-    intersection(other, new HashPartitioner(numPartitions))
+    intersection(other, new HashPartitioner(this.context.conf, numPartitions))
   }
 
   /**
@@ -701,7 +701,7 @@ abstract class RDD[T: ClassTag](
   def groupBy[K](
       f: T => K,
       numPartitions: Int)(implicit kt: ClassTag[K]): RDD[(K, Iterable[T])] = withScope {
-    groupBy(f, new HashPartitioner(numPartitions))
+    groupBy(f, new HashPartitioner(this.context.conf, numPartitions))
   }
 
   /**
@@ -969,14 +969,15 @@ abstract class RDD[T: ClassTag](
    * RDD will be &lt;= us.
    */
   def subtract(other: RDD[T]): RDD[T] = withScope {
-    subtract(other, partitioner.getOrElse(new HashPartitioner(partitions.length)))
+    subtract(other, partitioner.getOrElse(
+      new HashPartitioner(this.context.conf, partitions.length)))
   }
 
   /**
    * Return an RDD with the elements from `this` that are not in `other`.
    */
   def subtract(other: RDD[T], numPartitions: Int): RDD[T] = withScope {
-    subtract(other, new HashPartitioner(numPartitions))
+    subtract(other, new HashPartitioner(this.context.conf, numPartitions))
   }
 
   /**
@@ -1147,7 +1148,8 @@ abstract class RDD[T: ClassTag](
         val curNumPartitions = numPartitions
         partiallyAggregated = partiallyAggregated.mapPartitionsWithIndex {
           (i, iter) => iter.map((i % curNumPartitions, _))
-        }.foldByKey(zeroValue, new HashPartitioner(curNumPartitions))(cleanCombOp).values
+        }.foldByKey(zeroValue, new HashPartitioner(this.context.conf,
+          curNumPartitions))(cleanCombOp).values
       }
       val copiedZeroValue = Utils.clone(zeroValue, sc.env.closureSerializer.newInstance())
       partiallyAggregated.fold(copiedZeroValue)(cleanCombOp)

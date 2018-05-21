@@ -922,8 +922,8 @@ object ALS extends DefaultParamsReadable[ALS] with Logging {
     val sc = ratings.sparkContext
 
     // Precompute the rating dependencies of each partition
-    val userPart = new ALSPartitioner(numUserBlocks)
-    val itemPart = new ALSPartitioner(numItemBlocks)
+    val userPart = new ALSPartitioner(sc.conf, numUserBlocks)
+    val itemPart = new ALSPartitioner(sc.conf, numItemBlocks)
     val blockRatings = partitionRatings(ratings, userPart, itemPart)
       .persist(intermediateRDDStorageLevel)
     val (userInBlocks, userOutBlocks) =
@@ -1588,7 +1588,7 @@ object ALS extends DefaultParamsReadable[ALS] with Logging {
           "Converting to local indices took " + (System.nanoTime() - start) / 1e9 + " seconds.")
         val dstLocalIndices = dstIds.map(dstIdToLocalIndex.apply)
         (srcBlockId, (dstBlockId, srcIds, dstLocalIndices, ratings))
-    }.groupByKey(new ALSPartitioner(srcPart.numPartitions))
+    }.groupByKey(new ALSPartitioner(ratingBlocks.context.conf, srcPart.numPartitions))
       .mapValues { iter =>
         val builder =
           new UncompressedInBlockBuilder[ID](new LocalIndexEncoder(dstPart.numPartitions))
@@ -1656,7 +1656,8 @@ object ALS extends DefaultParamsReadable[ALS] with Logging {
           (dstBlockId, (srcBlockId, activeIndices.map(idx => srcFactors(idx))))
         }
     }
-    val merged = srcOut.groupByKey(new ALSPartitioner(dstInBlocks.partitions.length))
+    val merged = srcOut.groupByKey(
+      new ALSPartitioner(srcFactorBlocks.context.conf, dstInBlocks.partitions.length))
     dstInBlocks.join(merged).mapValues {
       case (InBlock(dstIds, srcPtrs, srcEncodedIndices, ratings), srcFactors) =>
         val sortedSrcFactors = new Array[FactorBlock](numSrcBlocks)

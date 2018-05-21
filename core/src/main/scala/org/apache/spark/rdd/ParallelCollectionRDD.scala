@@ -85,7 +85,7 @@ private[spark] class ParallelCollectionPartition[T: ClassTag](
 private[spark] class ParallelCollectionRDD[T: ClassTag](
     sc: SparkContext,
     @transient private val data: Seq[T],
-    numSlices: Int,
+    var numSlices: Int,
     locationPrefs: Map[Int, Seq[String]])
     extends RDD[T](sc, Nil) {
   // TODO: Right now, each split sends along its full data, even if later down the RDD chain it gets
@@ -94,6 +94,12 @@ private[spark] class ParallelCollectionRDD[T: ClassTag](
   // UPDATE: A parallel collection can be checkpointed to HDFS, which achieves this goal.
 
   override def getPartitions: Array[Partition] = {
+    numSlices = if (conf.neptunePartitionEnabled()) {
+      conf.neptuneGetPartitionSize()
+    }
+    else {
+      numSlices
+    }
     val slices = ParallelCollectionRDD.slice(data, numSlices).toArray
     slices.indices.map(i => new ParallelCollectionPartition(id, i, slices(i))).toArray
   }

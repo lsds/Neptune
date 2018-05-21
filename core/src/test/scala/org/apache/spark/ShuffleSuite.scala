@@ -63,7 +63,7 @@ abstract class ShuffleSuite extends SparkFunSuite with Matchers with LocalSparkC
     // default Java serializer cannot handle the non serializable class.
     val c = new ShuffledRDD[Int,
       NonJavaSerializableClass,
-      NonJavaSerializableClass](b, new HashPartitioner(NUM_BLOCKS))
+      NonJavaSerializableClass](b, new HashPartitioner(sc.conf, NUM_BLOCKS))
     c.setSerializer(new KryoSerializer(conf))
     val shuffleId = c.dependencies.head.asInstanceOf[ShuffleDependency[_, _, _]].shuffleId
 
@@ -87,7 +87,7 @@ abstract class ShuffleSuite extends SparkFunSuite with Matchers with LocalSparkC
     // default Java serializer cannot handle the non serializable class.
     val c = new ShuffledRDD[Int,
       NonJavaSerializableClass,
-      NonJavaSerializableClass](b, new HashPartitioner(3))
+      NonJavaSerializableClass](b, new HashPartitioner(sc.conf, 3))
     c.setSerializer(new KryoSerializer(conf))
     assert(c.count === 10)
   }
@@ -103,7 +103,7 @@ abstract class ShuffleSuite extends SparkFunSuite with Matchers with LocalSparkC
 
     // NOTE: The default Java serializer doesn't create zero-sized blocks.
     //       So, use Kryo
-    val c = new ShuffledRDD[Int, Int, Int](b, new HashPartitioner(NUM_BLOCKS))
+    val c = new ShuffledRDD[Int, Int, Int](b, new HashPartitioner(sc.conf, NUM_BLOCKS))
       .setSerializer(new KryoSerializer(conf))
 
     val shuffleId = c.dependencies.head.asInstanceOf[ShuffleDependency[_, _, _]].shuffleId
@@ -129,7 +129,7 @@ abstract class ShuffleSuite extends SparkFunSuite with Matchers with LocalSparkC
     val b = a.map(x => (x, x*2))
 
     // NOTE: The default Java serializer should create zero-sized blocks
-    val c = new ShuffledRDD[Int, Int, Int](b, new HashPartitioner(NUM_BLOCKS))
+    val c = new ShuffledRDD[Int, Int, Int](b, new HashPartitioner(sc.conf, NUM_BLOCKS))
 
     val shuffleId = c.dependencies.head.asInstanceOf[ShuffleDependency[_, _, _]].shuffleId
     assert(c.count === 4)
@@ -151,7 +151,7 @@ abstract class ShuffleSuite extends SparkFunSuite with Matchers with LocalSparkC
     val data = Array(p(1, 1), p(1, 2), p(1, 3), p(2, 1))
     val pairs: RDD[MutablePair[Int, Int]] = sc.parallelize(data, 2)
     val results = new ShuffledRDD[Int, Int, Int](pairs,
-      new HashPartitioner(2)).collect()
+      new HashPartitioner(sc.conf, 2)).collect()
 
     data.foreach { pair => results should contain ((pair._1, pair._2)) }
   }
@@ -179,7 +179,7 @@ abstract class ShuffleSuite extends SparkFunSuite with Matchers with LocalSparkC
     val data2 = Seq(p(1, "11"), p(1, "12"), p(2, "22"), p(3, "3"))
     val pairs1: RDD[MutablePair[Int, Int]] = sc.parallelize(data1, 2)
     val pairs2: RDD[MutablePair[Int, String]] = sc.parallelize(data2, 2)
-    val results = new CoGroupedRDD[Int](Seq(pairs1, pairs2), new HashPartitioner(2))
+    val results = new CoGroupedRDD[Int](Seq(pairs1, pairs2), new HashPartitioner(sc.conf, 2))
       .map(p => (p._1, p._2.map(_.toArray)))
       .collectAsMap()
 
@@ -206,7 +206,7 @@ abstract class ShuffleSuite extends SparkFunSuite with Matchers with LocalSparkC
     val data2 = Seq(p(1, "11"), p(1, "12"), p(2, "22"))
     val pairs1: RDD[MutablePair[Int, Int]] = sc.parallelize(data1, 2)
     val pairs2: RDD[MutablePair[Int, String]] = sc.parallelize(data2, 2)
-    val results = new SubtractedRDD(pairs1, pairs2, new HashPartitioner(2)).collect()
+    val results = new SubtractedRDD(pairs1, pairs2, new HashPartitioner(sc.conf, 2)).collect()
     results should have length (1)
     // substracted rdd return results as Tuple2
     results(0) should be ((3, 33))
@@ -357,7 +357,7 @@ abstract class ShuffleSuite extends SparkFunSuite with Matchers with LocalSparkC
     val taskMemoryManager = new TaskMemoryManager(sc.env.memoryManager, 0L)
     val metricsSystem = sc.env.metricsSystem
     val shuffleMapRdd = new MyRDD(sc, 1, Nil)
-    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(1))
+    val shuffleDep = new ShuffleDependency(shuffleMapRdd, new HashPartitioner(sc.conf, 1))
     val shuffleHandle = manager.registerShuffle(0, 1, shuffleDep)
     mapTrackerMaster.registerShuffle(0, 1)
 

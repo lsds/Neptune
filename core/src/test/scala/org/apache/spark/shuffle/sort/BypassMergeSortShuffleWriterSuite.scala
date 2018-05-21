@@ -65,7 +65,7 @@ class BypassMergeSortShuffleWriterSuite extends SparkFunSuite with BeforeAndAfte
       numMaps = 2,
       dependency = dependency
     )
-    when(dependency.partitioner).thenReturn(new HashPartitioner(7))
+    when(dependency.partitioner).thenReturn(new HashPartitioner(new SparkConf(), 7))
     when(dependency.serializer).thenReturn(new JavaSerializer(conf))
     when(taskContext.taskMetrics()).thenReturn(taskMetrics)
     when(blockResolver.getDataFile(0, 0)).thenReturn(outputFile)

@@ -31,7 +31,7 @@ import org.apache.spark.util.Utils
 
 trait RDDCheckpointTester { self: SparkFunSuite =>
 
-  protected val partitioner = new HashPartitioner(2)
+  protected val partitioner = new HashPartitioner(self.sparkContext.conf, 2)
 
   private def defaultCollectFunc[T](rdd: RDD[T]): Any = rdd.collect()
 
