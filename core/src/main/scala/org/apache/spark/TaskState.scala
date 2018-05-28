@@ -19,11 +19,13 @@ package org.apache.spark
 
 private[spark] object TaskState extends Enumeration {
 
-  val LAUNCHING, RUNNING, FINISHED, FAILED, KILLED, LOST = Value
+  val LAUNCHING, RUNNING, PAUSED, FINISHED, FAILED, KILLED, LOST = Value
 
   private val FINISHED_STATES = Set(FINISHED, FAILED, KILLED, LOST)
 
   type TaskState = Value
+
+  def isPaused(state: TaskState): Boolean = (PAUSED == state)
 
   def isFailed(state: TaskState): Boolean = (LOST == state) || (FAILED == state)
 
