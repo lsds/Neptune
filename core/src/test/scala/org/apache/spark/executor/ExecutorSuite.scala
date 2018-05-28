@@ -26,7 +26,6 @@ import java.util.concurrent.{CountDownLatch, TimeUnit}
 import scala.collection.mutable.Map
 import scala.concurrent.duration._
 import scala.language.postfixOps
-
 import org.mockito.ArgumentCaptor
 import org.mockito.Matchers.{any, eq => meq}
 import org.mockito.Mockito.{inOrder, verify, when}
@@ -34,12 +33,11 @@ import org.mockito.invocation.InvocationOnMock
 import org.mockito.stubbing.Answer
 import org.scalatest.concurrent.Eventually
 import org.scalatest.mockito.MockitoSugar
-
 import org.apache.spark._
 import org.apache.spark.TaskState.TaskState
 import org.apache.spark.memory.MemoryManager
 import org.apache.spark.metrics.MetricsSystem
-import org.apache.spark.rdd.RDD
+import org.apache.spark.rdd.{RDD, UnionRDD}
 import org.apache.spark.rpc.RpcEnv
 import org.apache.spark.scheduler.{FakeTask, ResultTask, TaskDescription}
 import org.apache.spark.serializer.{JavaSerializer, SerializerManager}
@@ -127,6 +125,43 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
         executor.stop()
       }
     }
+  }
+
+  test("SPARK-Pausable Tasks") {
+    val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
+    sc = new SparkContext(conf)
+    val serializer = SparkEnv.get.closureSerializer.newInstance()
+    val resultFunc = (context: TaskContext, itr: Iterator[Int]) => itr.toArray
+
+    val rdd1 = sc.parallelize(1 to 10, 2)
+    val rdd2 = rdd1.filter(_ % 2 == 0)
+    val rdd3 = rdd2.map(_ + 1)
+    // Should be 3+2 = 5
+    val rdd4 = rdd3.collect()
+//    val rdd4 = new UnionRDD(sc, List(rdd1, rdd2, rdd3))
+
+    val taskBinary = sc.broadcast(serializer.serialize((rdd3, resultFunc)).array())
+    val serializedTaskMetrics = serializer.serialize(TaskMetrics.registered).array()
+    val task = new ResultTask(
+      stageId = 1,
+      stageAttemptId = 0,
+      taskBinary = taskBinary,
+      partition = rdd1.partitions(0),
+      locs = Seq(),
+      outputId = 0,
+      localProperties = new Properties(),
+      serializedTaskMetrics = serializedTaskMetrics
+    )
+
+    val serTask = serializer.serialize(task)
+    val taskDescription = createFakeTaskDescription(serTask)
+
+    // Now run Task
+    runTaskSimpleHandler(taskDescription)
+
+    //scalastyle:off
+    println("Actual Result: ")
+    rdd4.foreach(println)
   }
 
   test("SPARK-19276: Handle FetchFailedExceptions that are hidden by user exceptions") {
@@ -258,6 +293,33 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
 
   private def runTaskAndGetFailReason(taskDescription: TaskDescription): TaskFailedReason = {
     runTaskGetFailReasonAndExceptionHandler(taskDescription)._1
+  }
+
+  private def runTaskSimpleHandler(taskDescription: TaskDescription): Unit = {
+    val mockBackend = mock[ExecutorBackend]
+    val mockUncaughtExceptionHandler = mock[UncaughtExceptionHandler]
+    var executor: Executor = null
+    try {
+      executor = new Executor("id", "localhost", SparkEnv.get, userClassPath = Nil, isLocal = true,
+        uncaughtExceptionHandler = mockUncaughtExceptionHandler)
+      // the task will be launched in a dedicated worker thread
+      executor.launchTask(mockBackend, taskDescription)
+      eventually(timeout(5.seconds), interval(10.milliseconds)) {
+        assert(executor.numRunningTasks === 0)
+      }
+    } finally {
+      if (executor != null) {
+        executor.stop()
+      }
+    }
+    // Capture all the updates send from the Executor in order
+    val orderedMock = inOrder(mockBackend)
+    val statusCaptor = ArgumentCaptor.forClass(classOf[ByteBuffer])
+    orderedMock.verify(mockBackend)
+      .statusUpdate(meq(0L), meq(TaskState.RUNNING), statusCaptor.capture())
+    orderedMock.verify(mockBackend)
+    // first statusUpdate for RUNNING has empty data (kinda irrelevant)
+    assert(statusCaptor.getAllValues().get(0).remaining() === 0)
   }
 
   private def runTaskGetFailReasonAndExceptionHandler(
