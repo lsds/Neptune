@@ -127,11 +127,15 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     }
   }
 
-  test("SPARK-Pausable Tasks") {
+  /**
+    * ::Neptune::
+    * Simple pause task test
+    */
+  test("SPARK Task Simple case") {
     val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
     sc = new SparkContext(conf)
     val serializer = SparkEnv.get.closureSerializer.newInstance()
-    val resultFunc = (context: TaskContext, itr: Iterator[Int]) => itr.toArray
+    val resultFunc = (context: TaskContext, itr: Iterator[Int]) => itr.next()
 
     val rdd1 = sc.parallelize(1 to 10, 2)
     val rdd2 = rdd1.filter(_ % 2 == 0)
@@ -160,8 +164,44 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     runTaskSimpleHandler(taskDescription)
 
     //scalastyle:off
-    println("Actual Result: ")
-    rdd4.foreach(println)
+    println(s"Actual Result: ${rdd4.mkString(", ")}")
+  }
+
+  test("SPARK Task pause iterator case") {
+    val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
+    sc = new SparkContext(conf)
+    val serializer = SparkEnv.get.closureSerializer.newInstance()
+    val resultFunc = (context: TaskContext, itr: Iterator[Int]) => itr.size
+
+    val rdd1 = sc.parallelize(1 to 10, 1)
+    val rdd2 = rdd1.filter(_ % 2 == 0)
+    val rdd3 = rdd2.map(_ + 1)
+    // Should be 3+2 = 5
+    val rdd4 = rdd3.collect()
+    //    val rdd4 = new UnionRDD(sc, List(rdd1, rdd2, rdd3))
+
+    val taskBinary = sc.broadcast(serializer.serialize((rdd3, resultFunc)).array())
+    val serializedTaskMetrics = serializer.serialize(TaskMetrics.registered).array()
+    val task = new ResultTask(
+      stageId = 1,
+      stageAttemptId = 0,
+      taskBinary = taskBinary,
+      partition = rdd1.partitions(0),
+      locs = Seq(),
+      outputId = 0,
+      localProperties = new Properties(),
+      serializedTaskMetrics = serializedTaskMetrics
+    )
+
+    val mockBackend = mock[ExecutorBackend]
+    for (elem: Partition <- rdd1.glom().partitions) {
+      println(s"Partition index ${elem.index}")
+    }
+    rdd1.foreachPartition(p => println(p.mkString(", ")))
+    println(s"Result func1 ${
+      resultFunc(TaskContext.empty(), rdd1.iterator(rdd1.partitions(0), TaskContext.empty()))}")
+    println(s"Result func2 ${
+      resultFunc(TaskContext.empty(), rdd1.iterator(rdd1.partitions(0), TaskContext.empty()))}")
   }
 
   test("SPARK-19276: Handle FetchFailedExceptions that are hidden by user exceptions") {

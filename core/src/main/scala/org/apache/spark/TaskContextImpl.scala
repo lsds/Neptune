@@ -63,6 +63,12 @@ private[spark] class TaskContextImpl(
   // If defined, the corresponding task has been killed and this option contains the reason.
   @volatile private var reasonIfKilled: Option[String] = None
 
+  /**
+    * ::Neptune::
+    * Whether a task has been paused.
+    */
+  @volatile private var paused: Boolean = false
+
   // Whether the task has completed.
   private var completed: Boolean = false
 
@@ -140,6 +146,21 @@ private[spark] class TaskContextImpl(
     }
   }
 
+  /**
+    * ::Neptune::
+    * Cooperative task pausing
+    */
+  private[spark] def markPaused(toPause: Boolean): Unit = {
+    if (paused == toPause) return
+    paused = toPause
+  }
+
+  private[spark] override def pauseTaskIfMarked(): Unit = {
+    if (paused) {
+      Thread.`yield`()
+    }
+  }
+
   /** Marks the task for interruption, i.e. cancellation. */
   private[spark] def markInterrupted(reason: String): Unit = {
     reasonIfKilled = Some(reason)
@@ -160,6 +181,8 @@ private[spark] class TaskContextImpl(
   override def isCompleted(): Boolean = synchronized(completed)
 
   override def isRunningLocally(): Boolean = false
+
+  override def isPaused(): Boolean = paused
 
   override def isInterrupted(): Boolean = reasonIfKilled.isDefined
 

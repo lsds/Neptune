@@ -92,6 +92,11 @@ abstract class TaskContext extends Serializable {
   def isCompleted(): Boolean
 
   /**
+    * Returns true if the task has been paused.
+    */
+  def isPaused(): Boolean
+
+  /**
    * Returns true if the task has been killed.
    */
   def isInterrupted(): Boolean
@@ -195,6 +200,12 @@ abstract class TaskContext extends Serializable {
    * If the task is interrupted, throws TaskKilledException with the reason for the interrupt.
    */
   private[spark] def killTaskIfInterrupted(): Unit
+
+  /**
+    * ::Neptune::
+    * Checkpoint Task (whatever that means) and pause
+    */
+  private[spark] def pauseTaskIfMarked(): Unit
 
   /**
    * If the task is interrupted, the reason this task was killed, otherwise None.

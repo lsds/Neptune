@@ -28,12 +28,19 @@ import org.apache.spark.annotation.DeveloperApi
 class InterruptibleIterator[+T](val context: TaskContext, val delegate: Iterator[T])
   extends Iterator[T] {
 
+  private var count: Int = 0
+
   def hasNext: Boolean = {
     // TODO(aarondav/rxin): Check Thread.interrupted instead of context.interrupted if interrupt
     // is allowed. The assumption is that Thread.interrupted does not have a memory fence in read
     // (just a volatile field in C), while context.interrupted is a volatile in the JVM, which
     // introduces an expensive read fence.
     context.killTaskIfInterrupted()
+//    context.pauseTaskIfMarked()
+    if (count == 5) return false
+    //scalastyle:off
+    else println(s"Elem: ${delegate.next()}")
+    count += 1
     delegate.hasNext
   }
 
