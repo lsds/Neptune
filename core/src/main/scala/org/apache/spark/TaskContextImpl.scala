@@ -64,9 +64,9 @@ private[spark] class TaskContextImpl(
   @volatile private var reasonIfKilled: Option[String] = None
 
   /**
-    * ::Neptune::
-    * Whether a task has been paused.
-    */
+   * ::Neptune::
+   * Whether a task has been paused.
+   */
   @volatile private var paused: Boolean = false
 
   // Whether the task has completed.
@@ -147,9 +147,9 @@ private[spark] class TaskContextImpl(
   }
 
   /**
-    * ::Neptune::
-    * Cooperative task pausing
-    */
+   * ::Neptune::
+   * Cooperative task pausing
+   */
   private[spark] def markPaused(toPause: Boolean): Unit = {
     if (paused == toPause) return
     paused = toPause
