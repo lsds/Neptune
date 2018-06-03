@@ -141,8 +141,7 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     val rdd2 = rdd1.filter(_ % 2 == 0)
     val rdd3 = rdd2.map(_ + 1)
     // Should be 3+2 = 5
-    val rdd4 = rdd3.collect()
-//    val rdd4 = new UnionRDD(sc, List(rdd1, rdd2, rdd3))
+//    val rdd4 = rdd3.collect()
 
     val taskBinary = sc.broadcast(serializer.serialize((rdd3, resultFunc)).array())
     val serializedTaskMetrics = serializer.serialize(TaskMetrics.registered).array()
@@ -162,9 +161,6 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
 
     // Now run Task
     runTaskSimpleHandler(taskDescription)
-
-    //scalastyle:off
-    println(s"Actual Result: ${rdd4.mkString(", ")}")
   }
 
   test("SPARK Task pause iterator case") {
@@ -177,8 +173,8 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     val rdd2 = rdd1.filter(_ % 2 == 0)
     val rdd3 = rdd2.map(_ + 1)
     // Should be 3+2 = 5
-    val rdd4 = rdd3.collect()
-    //    val rdd4 = new UnionRDD(sc, List(rdd1, rdd2, rdd3))
+//    val rdd4 = rdd3.count()
+    // Count action is the same as itr.size function
 
     val taskBinary = sc.broadcast(serializer.serialize((rdd3, resultFunc)).array())
     val serializedTaskMetrics = serializer.serialize(TaskMetrics.registered).array()
@@ -193,15 +189,15 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
       serializedTaskMetrics = serializedTaskMetrics
     )
 
-    val mockBackend = mock[ExecutorBackend]
-    for (elem: Partition <- rdd1.glom().partitions) {
+    // scalastyle:off
+    println(rdd3.toDebugString)
+    for (elem: Partition <- rdd3.partitions) {
       println(s"Partition index ${elem.index}")
+      println(rdd3.glom().collect()(elem.index).mkString(", "))
     }
-    rdd1.foreachPartition(p => println(p.mkString(", ")))
-    println(s"Result func1 ${
-      resultFunc(TaskContext.empty(), rdd1.iterator(rdd1.partitions(0), TaskContext.empty()))}")
-    println(s"Result func2 ${
-      resultFunc(TaskContext.empty(), rdd1.iterator(rdd1.partitions(0), TaskContext.empty()))}")
+
+    println(s"Result func1 ${resultFunc(TaskContext.empty(), rdd3.iterator(rdd3.partitions(0), TaskContext.empty()))}")
+    println(s"Result func2 ${resultFunc(TaskContext.empty(), rdd3.iterator(rdd3.partitions(0), TaskContext.empty()))}")
   }
 
   test("SPARK-19276: Handle FetchFailedExceptions that are hidden by user exceptions") {
