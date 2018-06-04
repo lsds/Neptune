@@ -39,7 +39,7 @@ import org.apache.spark.memory.MemoryManager
 import org.apache.spark.metrics.MetricsSystem
 import org.apache.spark.rdd.{RDD, UnionRDD}
 import org.apache.spark.rpc.RpcEnv
-import org.apache.spark.scheduler.{FakeTask, ResultTask, TaskDescription}
+import org.apache.spark.scheduler._
 import org.apache.spark.serializer.{JavaSerializer, SerializerManager}
 import org.apache.spark.shuffle.FetchFailedException
 import org.apache.spark.storage.BlockManagerId
@@ -135,13 +135,15 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
     sc = new SparkContext(conf)
     val serializer = SparkEnv.get.closureSerializer.newInstance()
-    val resultFunc = (context: TaskContext, itr: Iterator[Int]) => itr.next()
+    val resultFunc = (context: TaskContext, itr: Iterator[Int]) => itr.toList
 
-    val rdd1 = sc.parallelize(1 to 10, 2)
+    val rdd1 = sc.parallelize(1 to 10, 1)
     val rdd2 = rdd1.filter(_ % 2 == 0)
     val rdd3 = rdd2.map(_ + 1)
-    // Should be 3+2 = 5
-//    val rdd4 = rdd3.collect()
+    // Should be: 3, 5, 7, 9, 11
+    // Action needed for the lazy-evaluation!!
+    rdd3.collect()
+
 
     val taskBinary = sc.broadcast(serializer.serialize((rdd3, resultFunc)).array())
     val serializedTaskMetrics = serializer.serialize(TaskMetrics.registered).array()
@@ -149,7 +151,7 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
       stageId = 1,
       stageAttemptId = 0,
       taskBinary = taskBinary,
-      partition = rdd1.partitions(0),
+      partition = rdd3.partitions(0),
       locs = Seq(),
       outputId = 0,
       localProperties = new Properties(),
@@ -159,22 +161,24 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     val serTask = serializer.serialize(task)
     val taskDescription = createFakeTaskDescription(serTask)
 
+    // Expected results
+    val expectedResult = List(3, 5, 7, 9, 11)
     // Now run Task
-    runTaskSimpleHandler(taskDescription)
+    runTaskExpectedHandler(taskDescription, expectedResult)
   }
 
   test("SPARK Task pause iterator case") {
     val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
     sc = new SparkContext(conf)
     val serializer = SparkEnv.get.closureSerializer.newInstance()
-    val resultFunc = (context: TaskContext, itr: Iterator[Int]) => itr
+    val resultFunc = (context: TaskContext, itr: Iterator[Int]) => itr.toList
 
     val rdd1 = sc.parallelize(1 to 10, 1)
     val rdd2 = rdd1.filter(_ % 2 == 0)
     val rdd3 = rdd2.map(_ + 1)
-    // Should be 3+2 = 5
-//    val rdd4 = rdd3.count()
-    // Count action is the same as itr.size function
+    // Should be: 3, 5, 7, 9, 11
+    // Action needed for the lazy-evaluation!!
+    rdd3.collect()
 
     val taskBinary = sc.broadcast(serializer.serialize((rdd3, resultFunc)).array())
     val serializedTaskMetrics = serializer.serialize(TaskMetrics.registered).array()
@@ -195,14 +199,16 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
       println(s"Partition index ${elem.index}")
       println(rdd3.glom().collect()(elem.index).mkString(", "))
     }
+    println("-----------------")
 
     var tx:TaskContext = TaskContext.empty()
     tx.markPaused(true)
     val f1 = resultFunc(TaskContext.empty(), rdd3.iterator(rdd3.partitions(0), tx))
-    println(s"Result func1 ${f1.foreach(println)}")
+    println(s"Result func1: ${f1.mkString(", ")}")
     tx.markPaused(false)
     val f2 = resultFunc(TaskContext.empty(), rdd3.iterator(rdd3.partitions(0), tx))
-    println(s"Result func2 ${f2.foreach(println)}")
+    println(s"Result func2: ${f2.mkString(", ")}")
+
   }
 
   test("SPARK-19276: Handle FetchFailedExceptions that are hidden by user exceptions") {
@@ -336,13 +342,18 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     runTaskGetFailReasonAndExceptionHandler(taskDescription)._1
   }
 
-  private def runTaskSimpleHandler(taskDescription: TaskDescription): Unit = {
+
+  /**
+   * ::Neptune::
+   * Run a given Task in a mockedExecutor environment and assert the intercepted result
+   * @param taskDescription
+   * @param taskResult
+   */
+  private def runTaskExpectedHandler(taskDescription: TaskDescription, taskResult: List[_]): Unit = {
     val mockBackend = mock[ExecutorBackend]
-    val mockUncaughtExceptionHandler = mock[UncaughtExceptionHandler]
     var executor: Executor = null
     try {
-      executor = new Executor("id", "localhost", SparkEnv.get, userClassPath = Nil, isLocal = true,
-        uncaughtExceptionHandler = mockUncaughtExceptionHandler)
+      executor = new Executor("id", "localhost", SparkEnv.get, userClassPath = Nil, isLocal = true)
       // the task will be launched in a dedicated worker thread
       executor.launchTask(mockBackend, taskDescription)
       eventually(timeout(5.seconds), interval(10.milliseconds)) {
@@ -359,8 +370,26 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     orderedMock.verify(mockBackend)
       .statusUpdate(meq(0L), meq(TaskState.RUNNING), statusCaptor.capture())
     orderedMock.verify(mockBackend)
-    // first statusUpdate for RUNNING has empty data (kinda irrelevant)
+      .statusUpdate(meq(0L), meq(TaskState.FINISHED), statusCaptor.capture())
+
+    // first statusUpdate for RUNNING has empty data
     assert(statusCaptor.getAllValues().get(0).remaining() === 0)
+
+    val taskSer = SparkEnv.get.closureSerializer.newInstance()
+
+    import collection.JavaConverters._
+    for( finishedTaskData <- statusCaptor.getAllValues.asScala) {
+      if (finishedTaskData.limit() !== 0) {
+        // first statusUpdate for FINISHED has expected data
+        //        val finishedTaskResult = SparkEnv.get.closureSerializer.newInstance().deserialize[DirectTaskResult[_]](finishedTaskData)
+        taskSer.deserialize[TaskResult[_]](finishedTaskData) match {
+          case directResult: DirectTaskResult[_] =>
+            assert(directResult.value(taskSer) == taskResult)
+        }
+      }
+    }
+//    val result =
+//      SparkEnv.get.closureSerializer.newInstance().deserialize[S](finshedTaskData)
   }
 
   private def runTaskGetFailReasonAndExceptionHandler(
