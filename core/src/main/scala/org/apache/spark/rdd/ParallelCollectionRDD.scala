@@ -105,7 +105,11 @@ private[spark] class ParallelCollectionRDD[T: ClassTag](
   }
 
   override def compute(s: Partition, context: TaskContext): Iterator[T] = {
-    new InterruptibleIterator(context, s.asInstanceOf[ParallelCollectionPartition[T]].iterator)
+    if (context.iterator() == null) {
+      context.addIterator(
+        new InterruptibleIterator(context, s.asInstanceOf[ParallelCollectionPartition[T]].iterator))
+    }
+    return context.iterator().asInstanceOf[InterruptibleIterator[T]]
   }
 
   override def getPreferredLocations(s: Partition): Seq[String] = {

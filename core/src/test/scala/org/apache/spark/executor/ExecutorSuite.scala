@@ -167,7 +167,7 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
     sc = new SparkContext(conf)
     val serializer = SparkEnv.get.closureSerializer.newInstance()
-    val resultFunc = (context: TaskContext, itr: Iterator[Int]) => itr.size
+    val resultFunc = (context: TaskContext, itr: Iterator[Int]) => itr
 
     val rdd1 = sc.parallelize(1 to 10, 1)
     val rdd2 = rdd1.filter(_ % 2 == 0)
@@ -182,7 +182,7 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
       stageId = 1,
       stageAttemptId = 0,
       taskBinary = taskBinary,
-      partition = rdd1.partitions(0),
+      partition = rdd3.partitions(0),
       locs = Seq(),
       outputId = 0,
       localProperties = new Properties(),
@@ -196,8 +196,13 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
       println(rdd3.glom().collect()(elem.index).mkString(", "))
     }
 
-    println(s"Result func1 ${resultFunc(TaskContext.empty(), rdd3.iterator(rdd3.partitions(0), TaskContext.empty()))}")
-    println(s"Result func2 ${resultFunc(TaskContext.empty(), rdd3.iterator(rdd3.partitions(0), TaskContext.empty()))}")
+    var tx:TaskContext = TaskContext.empty()
+    tx.markPaused(true)
+    val f1 = resultFunc(TaskContext.empty(), rdd3.iterator(rdd3.partitions(0), tx))
+    println(s"Result func1 ${f1.foreach(println)}")
+    tx.markPaused(false)
+    val f2 = resultFunc(TaskContext.empty(), rdd3.iterator(rdd3.partitions(0), tx))
+    println(s"Result func2 ${f2.foreach(println)}")
   }
 
   test("SPARK-19276: Handle FetchFailedExceptions that are hidden by user exceptions") {

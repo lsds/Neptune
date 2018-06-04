@@ -68,6 +68,7 @@ private[spark] class TaskContextImpl(
    * Whether a task has been paused.
    */
   @volatile private var paused: Boolean = false
+  @volatile private var it: Iterator[Any] = null
 
   // Whether the task has completed.
   private var completed: Boolean = false
@@ -155,10 +156,19 @@ private[spark] class TaskContextImpl(
     paused = toPause
   }
 
-  private[spark] override def pauseTaskIfMarked(): Unit = {
+  private[spark] override def pauseTaskIfMarked(): Boolean = {
     if (paused) {
-      Thread.`yield`()
+      return true
     }
+    return false
+  }
+
+  private[spark] def addIterator(It : Iterator[Any]): Unit = {
+    it = It
+  }
+
+  private[spark] def iterator(): Iterator[Any] = {
+    return  it
   }
 
   /** Marks the task for interruption, i.e. cancellation. */

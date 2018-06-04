@@ -206,7 +206,12 @@ abstract class TaskContext extends Serializable {
    * ::Neptune::
    * Checkpoint Task (whatever that means) and pause
    */
-  private[spark] def pauseTaskIfMarked(): Unit
+  private[spark] def markPaused(toPause: Boolean): Unit
+  private[spark] def pauseTaskIfMarked(): Boolean
+
+  private[spark] def addIterator(It : Iterator[Any]): Unit
+  private[spark] def iterator(): Iterator[Any]
+
 
   /**
    * If the task is interrupted, the reason this task was killed, otherwise None.
