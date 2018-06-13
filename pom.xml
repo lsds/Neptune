@@ -400,6 +400,12 @@
         </exclusions>
       </dependency>
       <!-- End of shaded deps -->
+      <!--Neptune deps -->
+      <dependency>
+        <groupId>com.storm-enroute</groupId>
+        <artifactId>coroutines_2.11</artifactId>
+        <version>0.7</version>
+      </dependency>
       <dependency>
         <groupId>org.apache.commons</groupId>
         <artifactId>commons-lang3</artifactId>

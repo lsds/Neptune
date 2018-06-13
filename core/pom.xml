@@ -407,6 +407,12 @@
       <artifactId>wisdom-monitor</artifactId>
     </dependency>
 
+    <!--Neptune deps -->
+    <dependency>
+      <groupId>com.storm-enroute</groupId>
+      <artifactId>coroutines_2.11</artifactId>
+      <version>0.7</version>
+    </dependency>
   </dependencies>
   <build>
     <outputDirectory>target/scala-${scala.binary.version}/classes</outputDirectory>

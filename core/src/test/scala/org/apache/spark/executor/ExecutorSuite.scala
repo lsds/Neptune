@@ -23,6 +23,7 @@ import java.nio.ByteBuffer
 import java.util.Properties
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 
+import org.coroutines._
 import scala.collection.mutable.Map
 import scala.concurrent.duration._
 import scala.language.postfixOps
@@ -129,9 +130,8 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
 
   /**
     * ::Neptune::
-    * Simple pause task test
     */
-  test("SPARK Task Simple case") {
+  test("Neptune ResultTask expected result") {
     val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
     sc = new SparkContext(conf)
     val serializer = SparkEnv.get.closureSerializer.newInstance()
@@ -167,7 +167,7 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     runTaskExpectedHandler(taskDescription, expectedResult)
   }
 
-  test("SPARK Task pause iterator case") {
+  test("Neptune ResultTask mark paused iterator") {
     val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
     sc = new SparkContext(conf)
     val serializer = SparkEnv.get.closureSerializer.newInstance()
@@ -209,6 +209,30 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     val f2 = resultFunc(TaskContext.empty(), rdd3.iterator(rdd3.partitions(0), tx))
     println(s"Result func2: ${f2.mkString(", ")}")
 
+  }
+
+  test("Neptune coroutine test") {
+    val optionElems = coroutine { (opt: Option[Int]) =>
+      opt match {
+        case Some(x) => yieldval(x)
+        case None => // do nothing
+      }
+    }
+
+    val optionListElems = coroutine { (xs: List[Option[Int]]) =>
+      var curr = xs
+      while (curr != Nil) {
+        optionElems(curr.head)
+        curr = curr.tail
+      }
+    }
+    val xs = Some(1) :: None :: Some(3) :: Nil
+    val c = call(optionListElems(xs))
+    assert(c.resume)
+    assert(c.value == 1)
+    assert(c.resume)
+    assert(c.value == 3)
+    assert(!c.resume)
   }
 
   test("SPARK-19276: Handle FetchFailedExceptions that are hidden by user exceptions") {
@@ -356,7 +380,7 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
       executor = new Executor("id", "localhost", SparkEnv.get, userClassPath = Nil, isLocal = true)
       // the task will be launched in a dedicated worker thread
       executor.launchTask(mockBackend, taskDescription)
-      eventually(timeout(5.seconds), interval(10.milliseconds)) {
+      eventually(timeout(30.seconds), interval(10.milliseconds)) {
         assert(executor.numRunningTasks === 0)
       }
     } finally {
@@ -388,8 +412,6 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
         }
       }
     }
-//    val result =
-//      SparkEnv.get.closureSerializer.newInstance().deserialize[S](finshedTaskData)
   }
 
   private def runTaskGetFailReasonAndExceptionHandler(
