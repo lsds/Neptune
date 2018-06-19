@@ -1769,6 +1769,26 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
   }
 
   /**
+    * Neptune DAG job runner
+    */
+  test("test DAGScheduler runJob to resultHanlder") {
+    // Number of parallelized partitions implies number of tasks of job
+    val rdd = sc.parallelize(1 to 10, 2)
+    val results = new Array[Int](rdd.partitions.size)
+    sc.runJob[Int, Int](
+      rdd,
+      (context: TaskContext, iter: Iterator[Int]) => iter.size,
+      0 until rdd.partitions.length,
+      (index: Int, result: Int) => results(index) = result)
+
+      //scalastyle:off
+      println(results.mkString(", "))
+      results.foreach(x => assert(x == 5))
+//    // Make sure we can still run commands on our SparkContext
+//    assert(sc.parallelize(1 to 10, 2).count() === 10)
+  }
+
+  /**
    * The job will be failed on first task throwing a DAGSchedulerSuiteDummyException.
    *  Any subsequent task WILL throw a legitimate java.lang.UnsupportedOperationException.
    *  If multiple tasks, there exists a race condition between the SparkDriverExecutionExceptions
