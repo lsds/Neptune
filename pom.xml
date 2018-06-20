@@ -402,9 +402,9 @@
       <!-- End of shaded deps -->
       <!--Neptune deps -->
       <dependency>
-        <groupId>com.storm-enroute</groupId>
+        <groupId>uk.ac.uk</groupId>
         <artifactId>coroutines_2.11</artifactId>
-        <version>0.7</version>
+        <version>0.8-SNAPSHOT</version>
       </dependency>
       <dependency>
         <groupId>org.apache.commons</groupId>

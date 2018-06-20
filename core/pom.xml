@@ -409,9 +409,9 @@
 
     <!--Neptune deps -->
     <dependency>
-      <groupId>com.storm-enroute</groupId>
+      <groupId>uk.ac.ic</groupId>
       <artifactId>coroutines_2.11</artifactId>
-      <version>0.7</version>
+      <version>0.8-SNAPSHOT</version>
     </dependency>
   </dependencies>
   <build>
