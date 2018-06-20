@@ -18,10 +18,10 @@
 package org.apache.spark
 
 import java.util.Properties
+
 import javax.annotation.concurrent.GuardedBy
 
 import scala.collection.mutable.ArrayBuffer
-
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.internal.Logging
 import org.apache.spark.memory.TaskMemoryManager
@@ -29,6 +29,7 @@ import org.apache.spark.metrics.MetricsSystem
 import org.apache.spark.metrics.source.Source
 import org.apache.spark.shuffle.FetchFailedException
 import org.apache.spark.util._
+import org.coroutines.<~>
 
 /**
  * A [[TaskContext]] implementation.
@@ -50,7 +51,8 @@ private[spark] class TaskContextImpl(
     localProperties: Properties,
     @transient private val metricsSystem: MetricsSystem,
     // The default value is only used in tests.
-    override val taskMetrics: TaskMetrics = TaskMetrics.empty)
+    override val taskMetrics: TaskMetrics = TaskMetrics.empty,
+    override val isPausable: Boolean = false)
   extends TaskContext
   with Logging {
 
@@ -69,6 +71,7 @@ private[spark] class TaskContextImpl(
    */
   @volatile private var paused: Boolean = false
   @volatile private var it: Iterator[Any] = null
+  @volatile private var coInstance: Any <~> Any = null
 
   // Whether the task has completed.
   private var completed: Boolean = false
@@ -147,30 +150,6 @@ private[spark] class TaskContextImpl(
     }
   }
 
-  /**
-   * ::Neptune::
-   * Cooperative task pausing
-   */
-  private[spark] def markPaused(toPause: Boolean): Unit = {
-    if (paused == toPause) return
-    paused = toPause
-  }
-
-  private[spark] override def pauseTaskIfMarked(): Boolean = {
-    if (paused) {
-      return true
-    }
-    return false
-  }
-
-  private[spark] def addIterator(It : Iterator[Any]): Unit = {
-    it = It
-  }
-
-  private[spark] def iterator(): Iterator[Any] = {
-    return  it
-  }
-
   /** Marks the task for interruption, i.e. cancellation. */
   private[spark] def markInterrupted(reason: String): Unit = {
     reasonIfKilled = Some(reason)
@@ -192,8 +171,6 @@ private[spark] class TaskContextImpl(
 
   override def isRunningLocally(): Boolean = false
 
-  override def isPaused(): Boolean = paused
-
   override def isInterrupted(): Boolean = reasonIfKilled.isDefined
 
   override def getLocalProperty(key: String): String = localProperties.getProperty(key)
@@ -210,5 +187,29 @@ private[spark] class TaskContextImpl(
   }
 
   private[spark] def fetchFailed: Option[FetchFailedException] = _fetchFailedException
+
+  /**
+    * ::Neptune::
+    * Cooperative task pausing
+    */
+
+  private[spark] override def markPaused(toPause: Boolean): Unit = {
+    if (paused == toPause) return
+    paused = toPause
+  }
+
+  private[spark] override def isPaused(): Boolean = paused
+
+  private[spark] override def addIterator(It : Iterator[Any]): Unit = {
+    it = It
+  }
+
+  private[spark] override def iterator(): Iterator[Any] = it
+
+  private[spark] override def getcoInstance(): Any <~> Any = coInstance
+
+  private[spark] override def setCoInstance(co: Any <~> Any): Unit = {
+    coInstance = co
+  }
 
 }

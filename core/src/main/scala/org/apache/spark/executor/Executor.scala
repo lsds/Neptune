@@ -24,14 +24,9 @@ import java.net.{URI, URL}
 import java.nio.ByteBuffer
 import java.util.Properties
 import java.util.concurrent._
-import javax.annotation.concurrent.GuardedBy
-
-import scala.collection.JavaConverters._
-import scala.collection.mutable.{ArrayBuffer, HashMap, Map}
-import scala.util.control.NonFatal
 
 import com.google.common.util.concurrent.ThreadFactoryBuilder
-
+import javax.annotation.concurrent.GuardedBy
 import org.apache.spark._
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.Logging
@@ -42,6 +37,10 @@ import org.apache.spark.shuffle.FetchFailedException
 import org.apache.spark.storage.{StorageLevel, TaskResultBlockId}
 import org.apache.spark.util._
 import org.apache.spark.util.io.ChunkedByteBuffer
+
+import scala.collection.JavaConverters._
+import scala.collection.mutable.{ArrayBuffer, HashMap, Map}
+import scala.util.control.NonFatal
 
 /**
  * Spark executor, backed by a threadpool to run tasks.
@@ -342,12 +341,25 @@ private[spark] class Executor(
         } else 0L
         var threwException = true
         val value = try {
-          val res = task.run(
-            taskAttemptId = taskId,
-            attemptNumber = taskDescription.attemptNumber,
-            metricsSystem = env.metricsSystem)
-          threwException = false
-          res
+          if (task.isPausable) {
+            logWarning(s"Running Pausable Task of job: ${task.jobId}")
+            do {
+              task.run(
+                taskAttemptId = taskId,
+                attemptNumber = taskDescription.attemptNumber,
+                metricsSystem = env.metricsSystem)
+              logWarning(s"Pausable task yielded: ${task.context.getcoInstance().getValue}")
+            } while(!task.context.getcoInstance().isCompleted)
+            task.context.getcoInstance().result
+          } else {
+            logInfo(s"Running normal Task: ${task.jobId}")
+            val res = task.run(
+              taskAttemptId = taskId,
+              attemptNumber = taskDescription.attemptNumber,
+              metricsSystem = env.metricsSystem)
+            threwException = false
+            res
+          }
         } finally {
           val releasedLocks = env.blockManager.releaseAllLocksForTask(taskId)
           val freedMemory = taskMemoryManager.cleanUpAllAllocatedMemory()

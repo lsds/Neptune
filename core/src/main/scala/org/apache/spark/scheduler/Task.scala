@@ -60,7 +60,8 @@ private[spark] abstract class Task[T](
       SparkEnv.get.closureSerializer.newInstance().serialize(TaskMetrics.registered).array(),
     val jobId: Option[Int] = None,
     val appId: Option[String] = None,
-    val appAttemptId: Option[String] = None) extends Serializable {
+    val appAttemptId: Option[String] = None,
+    @volatile var isPausable: Boolean = false) extends Serializable {
 
   @transient lazy val metrics: TaskMetrics =
     SparkEnv.get.closureSerializer.newInstance().deserialize(ByteBuffer.wrap(serializedTaskMetrics))
@@ -76,17 +77,24 @@ private[spark] abstract class Task[T](
       taskAttemptId: Long,
       attemptNumber: Int,
       metricsSystem: MetricsSystem): T = {
-    SparkEnv.get.blockManager.registerTask(taskAttemptId)
-    context = new TaskContextImpl(
-      stageId,
-      stageAttemptId, // stageAttemptId and stageAttemptNumber are semantically equal
-      partitionId,
-      taskAttemptId,
-      attemptNumber,
-      taskMemoryManager,
-      localProperties,
-      metricsSystem,
-      metrics)
+    // Pausable tasks may start/pause multiple times, avoid reinitialization
+    if (context == null) {
+      SparkEnv.get.blockManager.registerTask(taskAttemptId)
+      context = new TaskContextImpl(
+        stageId,
+        stageAttemptId, // stageAttemptId and stageAttemptNumber are semantically equal
+        partitionId,
+        taskAttemptId,
+        attemptNumber,
+        taskMemoryManager,
+        localProperties,
+        metricsSystem,
+        metrics,
+        isPausable)
+    }
+    if(isPausable) {
+      context.markPaused(true)
+    }
     TaskContext.setTaskContext(context)
     taskThread = Thread.currentThread()
 

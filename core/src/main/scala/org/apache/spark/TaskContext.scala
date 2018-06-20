@@ -27,6 +27,8 @@ import org.apache.spark.metrics.source.Source
 import org.apache.spark.shuffle.FetchFailedException
 import org.apache.spark.util.{AccumulatorV2, TaskCompletionListener, TaskFailureListener}
 
+import org.coroutines.<~>
+
 
 object TaskContext {
   /**
@@ -90,12 +92,6 @@ abstract class TaskContext extends Serializable {
    * Returns true if the task has completed.
    */
   def isCompleted(): Boolean
-
-  /**
-   * ::Neptune::
-   * Returns true if the task has been paused.
-   */
-  def isPaused(): Boolean
 
   /**
    * Returns true if the task has been killed.
@@ -206,12 +202,15 @@ abstract class TaskContext extends Serializable {
    * ::Neptune::
    * Checkpoint Task (whatever that means) and pause
    */
+  private[spark] def isPausable(): Boolean
   private[spark] def markPaused(toPause: Boolean): Unit
-  private[spark] def pauseTaskIfMarked(): Boolean
+  private[spark] def isPaused(): Boolean
 
   private[spark] def addIterator(It : Iterator[Any]): Unit
   private[spark] def iterator(): Iterator[Any]
 
+  private[spark] def getcoInstance(): Any <~> Any
+  private[spark] def setCoInstance(co: Any <~> Any): Unit
 
   /**
    * If the task is interrupted, the reason this task was killed, otherwise None.
