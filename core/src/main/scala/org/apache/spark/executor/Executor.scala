@@ -342,14 +342,14 @@ private[spark] class Executor(
         var threwException = true
         val value = try {
           if (task.isPausable) {
-            logWarning(s"Running Pausable Task of job: ${task.jobId}")
+            logInfo(s"Running Pausable Task: ${task.jobId}")
             do {
               task.run(
                 taskAttemptId = taskId,
                 attemptNumber = taskDescription.attemptNumber,
                 metricsSystem = env.metricsSystem)
               logWarning(s"Pausable task yielded: ${task.context.getcoInstance().getValue}")
-            } while(!task.context.getcoInstance().isCompleted)
+            } while (!task.context.getcoInstance().isCompleted)
             task.context.getcoInstance().result
           } else {
             logInfo(s"Running normal Task: ${task.jobId}")

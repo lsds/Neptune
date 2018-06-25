@@ -428,16 +428,16 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
   /**
    * Neptune Project Extra configuration
    */
-  def enableAdaptiveTasks(): Unit = {
-    set("spark.neptune.tasks.adaptive", true.toString)
+  def enableNeptuneCoroutines(): Unit = {
+    set("spark.neptune.task.coroutines", true.toString)
   }
 
-  def disableAdaptiveTasks(): Unit = {
-    set("spark.neptune.tasks.adaptive", false.toString)
+  def disableNeptuneCoroutines(): Unit = {
+    set("spark.neptune.task.coroutines", false.toString)
   }
 
-  def isAdaptiveTasksEnabled(): Boolean = {
-    getOption("spark.neptune.tasks.adaptive") match {
+  def isNeptuneCoroutinesEnabled(): Boolean = {
+    getOption("spark.neptune.task.coroutines") match {
       case Some("true") => true
       case Some("false") => false
       case None => false
@@ -456,18 +456,18 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
     neptuneGetPartitionSize() > 0
   }
 
-  def enableTwoLevelScheduling(nschedulers: Int): Unit = {
+  def enableNeptuneTwoLevelScheduling(nschedulers: Int): Unit = {
     set("spark.neptune.schedulers", s"$nschedulers")
   }
 
-  def isTwoLevelSchedulingEnabled: Boolean = {
+  def isNeptuneTwoLevelSchedulingEnabled: Boolean = {
     getOption("spark.neptune.schedulers") match {
       case Some(n) => true
       case None => false
     }
   }
 
-  def getTwoLevelSchedulingNum(): Int = {
+  def getNeptuneTwoLevelSchedulingNum(): Int = {
     getOption("spark.neptune.schedulers") match {
       case Some(n) => n.toInt
       case None => 0

@@ -59,6 +59,8 @@ import org.apache.spark.storage.BlockManagerMessages.TriggerThreadDump
 import org.apache.spark.ui.{ConsoleProgressBar, SparkUI}
 import org.apache.spark.util._
 
+import org.coroutines.~>
+
 /**
  * Main entry point for Spark functionality. A SparkContext represents the connection to a Spark
  * cluster, and can be used to create RDDs, accumulators and broadcast variables on that cluster.
@@ -2031,6 +2033,37 @@ class SparkContext(config: SparkConf) extends Logging {
   }
 
   /**
+    * ::Neptune::
+    * Run a coroutine funtion on a given set of partitions in an RDD and pass the results to the given
+    * handler function.
+    *
+    * @param rdd target RDD to run tasks on
+    * @param func a coroutine function to run on each partition of the RDD
+    * @param partitions set of partitions to run on; some jobs may not want to compute on all
+    * partitions of the target RDD, e.g. for operations like `first()`
+    * @param resultHandler callback to pass each result to
+    */
+  def runCoroutineJob[T, U: ClassTag](
+      rdd: RDD[T],
+      func: (TaskContext, Iterator[T]) ~> (Int, U),
+      partitions: Seq[Int],
+      resultHandler: (Int, U) => Unit): Unit = {
+    if (stopped.get()) {
+      throw new IllegalStateException("SparkContext has been shutdown")
+    }
+    val callSite = getCallSite
+    val cleanedFunc = clean(func)
+    logInfo("Starting Coroutine job: " + callSite.shortForm)
+    if (conf.getBoolean("spark.logLineage", false)) {
+      logInfo("RDD's recursive dependencies:\n" + rdd.toDebugString)
+    }
+    dagScheduler.runCoroutineJob(rdd, cleanedFunc, partitions, callSite, resultHandler, localProperties.get)
+    progressBar.foreach(_.finishAll())
+    rdd.doCheckpoint()
+  }
+
+
+  /**
    * Run a function on a given set of partitions in an RDD and return the results as an array.
    * The function that is run against each partition additionally takes `TaskContext` argument.
    *
@@ -2047,6 +2080,27 @@ class SparkContext(config: SparkConf) extends Logging {
       partitions: Seq[Int]): Array[U] = {
     val results = new Array[U](partitions.size)
     runJob[T, U](rdd, func, partitions, (index, res) => results(index) = res)
+    results
+  }
+
+  /**
+    * ::Neptune::
+    * Run a coroutine function on a given set of partitions in an RDD and return the results in an array.
+    *
+    * @param rdd target RDD to run tasks on
+    * @param func a coroutine function to run on each partition of the RDD
+    * @param partitions set of partitions to run on; some jobs may not want to compute on all
+    * partitions of the target RDD, e.g. for operations like `first()`
+    * @return in-memory collection with a result of the job (each collection element will contain
+    * a result from one partition)
+    */
+
+  def runJob[T, U: ClassTag](
+      rdd: RDD[T],
+      func: (TaskContext, Iterator[T]) ~> (Int, U),
+      partitions: Seq[Int]): Array[U] = {
+    val results = new Array[U](partitions.size)
+    runCoroutineJob[T, U](rdd, func, partitions, (index, res) => results(index) = res)
     results
   }
 
@@ -2090,6 +2144,21 @@ class SparkContext(config: SparkConf) extends Logging {
    * a result from one partition)
    */
   def runJob[T, U: ClassTag](rdd: RDD[T], func: Iterator[T] => U): Array[U] = {
+    runJob(rdd, func, 0 until rdd.partitions.length)
+  }
+
+  /**
+    * ::Neptune::
+    * Run a coroutine-job on all partitions in an RDD and return the results in an array.
+    *
+    * @param rdd
+    * @param func
+    * @tparam T
+    * @tparam U
+    * @return
+    */
+
+  def runJob[T, U: ClassTag](rdd: RDD[T], func: (TaskContext, Iterator[T]) ~> (Int, U)): Array[U] = {
     runJob(rdd, func, 0 until rdd.partitions.length)
   }
 

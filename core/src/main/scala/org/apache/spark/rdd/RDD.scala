@@ -46,6 +46,8 @@ import org.apache.spark.util.collection.{OpenHashMap, Utils => collectionUtils}
 import org.apache.spark.util.random.{BernoulliCellSampler, BernoulliSampler, PoissonSampler,
   SamplingUtils}
 
+import org.coroutines.{coroutine, yieldval, ~>}
+
 /**
  * A Resilient Distributed Dataset (RDD), the basic abstraction in Spark. Represents an immutable,
  * partitioned collection of elements that can be operated on in parallel. This class contains the
@@ -934,7 +936,25 @@ abstract class RDD[T: ClassTag](
    * all the data is loaded into the driver's memory.
    */
   def collect(): Array[T] = withScope {
-    val results = sc.runJob(this, (iter: Iterator[T]) => iter.toArray)
+    // if sc.Neptune enable do coroutines
+    val results = if (sc.getConf.isNeptuneCoroutinesEnabled()) {
+      val resultFunc: (TaskContext, Iterator[T]) ~> (Int, Array[T]) =
+        coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          val result = new mutable.ArrayBuffer[T]
+          while (itr.hasNext) {
+            result.append(itr.next)
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+          }
+          result.toArray
+         }
+        }
+      sc.runJob(this, resultFunc)
+    }
+    else {
+      sc.runJob(this, (iter: Iterator[T]) => iter.toArray)
+    }
     Array.concat(results: _*)
   }
 

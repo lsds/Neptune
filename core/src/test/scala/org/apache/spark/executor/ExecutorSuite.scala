@@ -173,18 +173,6 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
     sc = new SparkContext(conf)
     val serializer = SparkEnv.get.closureSerializer.newInstance()
-    val resultFunc: (TaskContext, Iterator[Int]) ~> (Int, Any) =
-      coroutine { (context: TaskContext, itr: Iterator[Int]) => {
-          val result = new mutable.ListBuffer[Any]
-          while (itr.hasNext) {
-            result.append(itr.next)
-            if (context.isPaused()) {
-              yieldval(0)
-            }
-          }
-          result.asInstanceOf[Any]
-        }
-      }
 
     val rdd1 = sc.parallelize(1 to 10, 1)
     val rdd2 = rdd1.filter(_ % 2 == 0)
@@ -192,6 +180,19 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     // Should be: 3, 5, 7, 9, 11
     // Action needed for the lazy-evaluation!!
     rdd3.collect()
+
+    val resultFunc: (TaskContext, Iterator[Int]) ~> (Int, Any) =
+      coroutine { (context: TaskContext, itr: Iterator[Int]) => {
+        val result = new mutable.ArrayBuffer[Any]
+        while (itr.hasNext) {
+          result.append(itr.next)
+          if (context.isPaused()) {
+            yieldval(0)
+          }
+        }
+        result.toArray.asInstanceOf[Any]
+      }
+      }
 
     val taskBinary = sc.broadcast(serializer.serialize((rdd3, resultFunc)).array())
     val serializedTaskMetrics = serializer.serialize(TaskMetrics.registered).array()
@@ -211,10 +212,9 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     val taskDescription = createFakeTaskDescription(serTask)
 
     // Expected results
-    val expectedResult = List(3, 5, 7, 9, 11)
-    // Now run Task
+    val expectedResult = Array(3, 5, 7, 9, 11)
+    // Run the coroutine ResultTask bypassing the DAGScheduler
     runTaskExpectedHandler(taskDescription, expectedResult)
-
   }
 
   test("SPARK-19276: Handle FetchFailedExceptions that are hidden by user exceptions") {
@@ -390,7 +390,7 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
         // val finishedTaskResult = SparkEnv.get.closureSerializer.newInstance().deserialize[DirectTaskResult[_]](finishedTaskData)
         taskSer.deserialize[TaskResult[_]](finishedTaskData) match {
           case directResult: DirectTaskResult[_] =>
-            assert(directResult.value(taskSer) == taskResult)
+            assert(directResult.value(taskSer)  === taskResult)
         }
       }
     }
