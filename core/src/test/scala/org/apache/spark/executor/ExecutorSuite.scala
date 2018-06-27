@@ -217,6 +217,62 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
     runTaskExpectedHandler(taskDescription, expectedResult)
   }
 
+  test("test Neptune coroutine performance") {
+    val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
+    val numTrials = 100
+    val partitions = 4
+    val numElems = 1000000L
+
+    conf.enableNeptuneCoroutines()
+    sc = new SparkContext(conf)
+    warmup(sc)
+
+    val begin = System.nanoTime
+    for (j <- 0 until numTrials) {
+      val rdd1 = sc.parallelize(1L to numElems, partitions)
+      val rdd2 = rdd1.filter(_ % 2 == 0)
+      val rdd3 = rdd2.map(_ + 1)
+      // Should be: 3, 5, 7, 9, 11
+      // Action needed for the lazy-evaluation!!
+      val res = rdd3.collect()
+    }
+    // scalastyle:off
+    println(s"Neptune Took ${((System.nanoTime - begin) / 1e6) / numTrials} ms")
+  }
+
+  test("test Spark performance") {
+    val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
+    val numTrials = 100
+    val partitions = 4
+    val numElems = 1000000L
+
+    sc = new SparkContext(conf)
+    warmup(sc)
+
+    val begin = System.nanoTime
+    for (j <- 0 until numTrials) {
+      val rdd1 = sc.parallelize(1L to numElems, partitions)
+      val rdd2 = rdd1.filter(_ % 2 == 0)
+      val rdd3 = rdd2.map(_ + 1)
+      // Should be: 3, 5, 7, 9, 11
+      // Action needed for the lazy-evaluation!!
+      val res = rdd3.collect()
+    }
+    // scalastyle:off
+    println(s"Spark Took ${((System.nanoTime - begin) / 1e6) / numTrials } ms")
+
+  }
+
+  def warmup(sc: SparkContext): Unit = {
+    // Let all the executors join
+    Thread.sleep(10000)
+    // Warm up the JVM and copy the JAR out to all the machines etc.
+    sc.parallelize(0 until sc.getExecutorMemoryStatus.size,
+      sc.getExecutorMemoryStatus.size).foreach { x =>
+      Thread.sleep(1)
+    }
+  }
+
   test("SPARK-19276: Handle FetchFailedExceptions that are hidden by user exceptions") {
     val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
     sc = new SparkContext(conf)

@@ -1197,7 +1197,8 @@ class DAGScheduler(
             val locs = taskIdToLocations(id)
             new ResultTask(stage.id, stage.latestInfo.attemptNumber,
               taskBinary, part, locs, id, properties, serializedTaskMetrics,
-              Option(jobId), Option(sc.applicationId), sc.applicationAttemptId, stage.coFunc != null)
+              // Play it safe: stage.coFunc != null
+              Option(jobId), Option(sc.applicationId), sc.applicationAttemptId, sc.getConf.isNeptuneCoroutinesEnabled())
           }
       }
     } catch {

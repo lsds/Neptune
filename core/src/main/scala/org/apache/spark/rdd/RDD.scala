@@ -938,7 +938,7 @@ abstract class RDD[T: ClassTag](
   def collect(): Array[T] = withScope {
     // if sc.Neptune enable do coroutines
     val results = if (sc.getConf.isNeptuneCoroutinesEnabled()) {
-      val resultFunc: (TaskContext, Iterator[T]) ~> (Int, Array[T]) =
+      val toArrayFunc: (TaskContext, Iterator[T]) ~> (Int, Array[T]) =
         coroutine { (context: TaskContext, itr: Iterator[T]) => {
           val result = new mutable.ArrayBuffer[T]
           while (itr.hasNext) {
@@ -950,7 +950,7 @@ abstract class RDD[T: ClassTag](
           result.toArray
          }
         }
-      sc.runJob(this, resultFunc)
+      sc.runJob(this, toArrayFunc)
     }
     else {
       sc.runJob(this, (iter: Iterator[T]) => iter.toArray)
@@ -971,7 +971,27 @@ abstract class RDD[T: ClassTag](
     def collectPartition(p: Int): Array[T] = {
       sc.runJob(this, (iter: Iterator[T]) => iter.toArray, Seq(p)).head
     }
-    partitions.indices.iterator.flatMap(i => collectPartition(i))
+    def collectPartitionCoroutine(p: Int): Array[T] = {
+      val toArrayFunc: (TaskContext, Iterator[T]) ~> (Int, Array[T]) =
+        coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          val result = new mutable.ArrayBuffer[T]
+          while (itr.hasNext) {
+            result.append(itr.next)
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+          }
+          result.toArray
+        }
+        }
+      sc.runJob(this, toArrayFunc, Seq(p)).head
+    }
+
+    if (sc.getConf.isNeptuneCoroutinesEnabled()) {
+      partitions.indices.iterator.flatMap(i => collectPartitionCoroutine(i))
+    } else {
+      partitions.indices.iterator.flatMap(i => collectPartition(i))
+    }
   }
 
   /**
@@ -1036,6 +1056,37 @@ abstract class RDD[T: ClassTag](
         None
       }
     }
+
+    val reducePartitionCoroutine: (TaskContext, Iterator[T]) ~> (Int, Option[T]) =
+      coroutine { (context: TaskContext, itr: Iterator[T]) => {
+        if (itr.hasNext) {
+          // ReduceLeft custom implementation
+          if (itr.isEmpty) {
+            throw new UnsupportedOperationException("empty.reduceLeft")
+          }
+          var first = true
+          var acc: Any = 0
+
+          while (itr.hasNext) {
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+            if (first) {
+              acc = itr.next
+              first = false
+            }
+            else {
+              acc = cleanF(acc.asInstanceOf[T], itr.next)
+            }
+          }
+          Some(acc.asInstanceOf[T])
+        }
+        else {
+          None
+        }
+        }
+      }
+
     var jobResult: Option[T] = None
     val mergeResult = (index: Int, taskResult: Option[T]) => {
       if (taskResult.isDefined) {
@@ -1045,7 +1096,11 @@ abstract class RDD[T: ClassTag](
         }
       }
     }
-    sc.runJob(this, reducePartition, mergeResult)
+    if (!sc.getConf.isNeptuneCoroutinesEnabled()) {
+      sc.runJob(this, reducePartition, mergeResult)
+    } else {
+      sc.runCoroutineJob(this, reducePartitionCoroutine, 0 until this.partitions.length, mergeResult)
+    }
     // Get the final result out of our Option, or throw an exception if the RDD was empty
     jobResult.getOrElse(throw new UnsupportedOperationException("empty collection"))
   }
@@ -1106,9 +1161,27 @@ abstract class RDD[T: ClassTag](
     // Clone the zero value since we will also be serializing it as part of tasks
     var jobResult = Utils.clone(zeroValue, sc.env.closureSerializer.newInstance())
     val cleanOp = sc.clean(op)
-    val foldPartition = (iter: Iterator[T]) => iter.fold(zeroValue)(cleanOp)
     val mergeResult = (index: Int, taskResult: T) => jobResult = op(jobResult, taskResult)
-    sc.runJob(this, foldPartition, mergeResult)
+    if (!sc.getConf.isNeptuneCoroutinesEnabled()) {
+      val foldPartition = (iter: Iterator[T]) => iter.fold(zeroValue)(cleanOp)
+      sc.runJob(this, foldPartition, mergeResult)
+    }
+    else {
+      // FoldLeft coroutine implementation
+      val foldPartitionCoroutine: (TaskContext, Iterator[T]) ~> (Int, T) =
+        coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          var result: Any = zeroValue.asInstanceOf[T]
+          while (itr.hasNext) {
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+            result = op(result.asInstanceOf[T], itr.next)
+          }
+          result.asInstanceOf[T]
+        }
+       }
+      sc.runCoroutineJob(this, foldPartitionCoroutine, 0 until this.partitions.length, mergeResult)
+    }
     jobResult
   }
 
@@ -1179,7 +1252,27 @@ abstract class RDD[T: ClassTag](
   /**
    * Return the number of elements in the RDD.
    */
-  def count(): Long = sc.runJob(this, Utils.getIteratorSize _).sum
+  def count(): Long = {
+    if (sc.getConf.isNeptuneCoroutinesEnabled()) {
+      val toIteratorSize: (TaskContext, Iterator[T]) ~> (Int, Long) =
+        coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          var count = 0L
+          while (itr.hasNext) {
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+            count += 1L
+            itr.next()
+          }
+          count
+        }
+        }
+      sc.runJob(this, toIteratorSize).sum
+
+    } else {
+      sc.runJob(this, Utils.getIteratorSize _).sum
+    }
+  }
 
   /**
    * Approximate version of count() that returns a potentially incomplete result
@@ -1375,8 +1468,24 @@ abstract class RDD[T: ClassTag](
         }
 
         val p = partsScanned.until(math.min(partsScanned + numPartsToTry, totalParts).toInt)
-        val res = sc.runJob(this, (it: Iterator[T]) => it.take(left).toArray, p)
-
+        val res = if (!sc.getConf.isNeptuneCoroutinesEnabled()) {
+          sc.runJob(this, (it: Iterator[T]) => it.take(left).toArray, p)
+        } else {
+          // take the first 0,n elements (slice)
+          val takeFunc: (TaskContext, Iterator[T]) ~> (Int, Array[T]) =
+            coroutine { (context: TaskContext, itr: Iterator[T]) => {
+              val result = new mutable.ArrayBuffer[T]
+              while (itr.hasNext && result.size < left) {
+                result.append(itr.next)
+                if (context.isPaused()) {
+                  yieldval(0)
+                }
+              }
+              result.toArray
+            }
+            }
+          sc.runJob(this, takeFunc, p)
+        }
         res.foreach(buf ++= _.take(num - buf.size))
         partsScanned += p.size
       }
