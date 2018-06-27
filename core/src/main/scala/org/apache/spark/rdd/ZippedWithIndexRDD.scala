@@ -18,9 +18,9 @@
 package org.apache.spark.rdd
 
 import scala.reflect.ClassTag
-
 import org.apache.spark.{Partition, TaskContext}
 import org.apache.spark.util.Utils
+import org.coroutines.{coroutine, yieldval, ~>}
 
 private[spark]
 class ZippedWithIndexRDDPartition(val prev: Partition, val startIndex: Long)
@@ -47,11 +47,29 @@ class ZippedWithIndexRDD[T: ClassTag](prev: RDD[T]) extends RDD[(T, Long)](prev)
     } else if (n == 1) {
       Array(0L)
     } else {
-      prev.context.runJob(
-        prev,
-        Utils.getIteratorSize _,
-        0 until n - 1 // do not need to count the last partition
-      ).scanLeft(0L)(_ + _)
+      // Check for coroutines case
+      if (!sparkContext.getConf.isNeptuneCoroutinesEnabled()) {
+        prev.context.runJob(
+          prev,
+          Utils.getIteratorSize _,
+          0 until n - 1 // do not need to count the last partition
+        ).scanLeft(0L)(_ + _)
+      } else {
+        val toIteratorSizeCoFunc: (TaskContext, Iterator[T]) ~> (Int, Long) =
+          coroutine { (context: TaskContext, itr: Iterator[T]) => {
+            var count = 0L
+            while (itr.hasNext) {
+              if (context.isPaused()) {
+                yieldval(0)
+              }
+              count += 1L
+              itr.next()
+            }
+            count
+          }
+          }
+        prev.context.runJob(prev, toIteratorSizeCoFunc, 0 until n - 1).scanLeft(0L)(_ + _)
+      }
     }
   }
 
