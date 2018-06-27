@@ -1120,27 +1120,27 @@ class RDDCoroutineSuite extends SparkFunSuite {
     assert(thrown.getMessage.contains("SPARK-5063"))
   }
 
-//  test("custom RDD coalescer") {
-//    val maxSplitSize = 512
-//    val outDir = new File(tempDir, "output").getAbsolutePath
-//    sc.makeRDD(1 to 1000, 10).saveAsTextFile(outDir)
-//    val hadoopRDD =
-//      sc.hadoopFile(outDir, classOf[TextInputFormat], classOf[LongWritable], classOf[Text])
-//    val coalescedHadoopRDD =
-//      hadoopRDD.coalesce(2, partitionCoalescer = Option(new SizeBasedCoalescer(maxSplitSize)))
-//    assert(coalescedHadoopRDD.partitions.size <= 10)
-//    var totalPartitionCount = 0L
-//    coalescedHadoopRDD.partitions.foreach(partition => {
-//      var splitSizeSum = 0L
-//      partition.asInstanceOf[CoalescedRDDPartition].parents.foreach(partition => {
-//        val split = partition.asInstanceOf[HadoopPartition].inputSplit.value.asInstanceOf[FileSplit]
-//        splitSizeSum += split.getLength
-//        totalPartitionCount += 1
-//      })
-//      assert(splitSizeSum <= maxSplitSize)
-//    })
-//    assert(totalPartitionCount == 10)
-//  }
+  test("custom RDD coalescer") {
+    val maxSplitSize = 512
+    val outDir = new File(tempDir, "output").getAbsolutePath
+    sc.makeRDD(1 to 1000, 10).saveAsTextFile(outDir)
+    val hadoopRDD =
+      sc.hadoopFile(outDir, classOf[TextInputFormat], classOf[LongWritable], classOf[Text])
+    val coalescedHadoopRDD =
+      hadoopRDD.coalesce(2, partitionCoalescer = Option(new SizeBasedCoalescer(maxSplitSize)))
+    assert(coalescedHadoopRDD.partitions.size <= 10)
+    var totalPartitionCount = 0L
+    coalescedHadoopRDD.partitions.foreach(partition => {
+      var splitSizeSum = 0L
+      partition.asInstanceOf[CoalescedRDDPartition].parents.foreach(partition => {
+        val split = partition.asInstanceOf[HadoopPartition].inputSplit.value.asInstanceOf[FileSplit]
+        splitSizeSum += split.getLength
+        totalPartitionCount += 1
+      })
+      assert(splitSizeSum <= maxSplitSize)
+    })
+    assert(totalPartitionCount == 10)
+  }
 
   test("SPARK-18406: race between end-of-task and completion iterator read lock release") {
     val rdd = sc.parallelize(1 to 1000, 10)
