@@ -43,6 +43,8 @@ import org.apache.spark.util.{SerializableConfiguration, SerializableJobConf, Ut
 import org.apache.spark.util.collection.CompactBuffer
 import org.apache.spark.util.random.StratifiedSamplingUtils
 
+import org.coroutines.{coroutine, yieldval, ~>}
+
 /**
  * Extra functions available on RDDs of (key, value) pairs through an implicit conversion.
  */
@@ -936,14 +938,34 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
     self.partitioner match {
       case Some(p) =>
         val index = p.getPartition(key)
-        val process = (it: Iterator[(K, V)]) => {
-          val buf = new ArrayBuffer[V]
-          for (pair <- it if pair._1 == key) {
-            buf += pair._2
-          }
-          buf
-        } : Seq[V]
-        val res = self.context.runJob(self, process, Array(index))
+        val res = if (!self.conf.isNeptuneCoroutinesEnabled()) {
+          val process = (it: Iterator[(K, V)]) => {
+            val buf = new ArrayBuffer[V]
+            for (pair <- it if pair._1 == key) {
+              buf += pair._2
+            }
+            buf
+          }: Seq[V]
+          self.context.runJob(self, process, Array(index))
+        } else {
+          // process coroutine implementation
+          val processCoFunc: (TaskContext, Iterator[(K, V)]) ~> (Int, Seq[V]) =
+            coroutine { (context: TaskContext, itr: Iterator[(K, V)]) => {
+              val buf = new ArrayBuffer[V]
+              while (itr.hasNext) {
+                if (context.isPaused()) {
+                  yieldval(0)
+                }
+                val pair = itr.next()
+                if (pair._1 == key) {
+                  buf += pair._2
+                }
+              }
+              buf.toSeq
+             }
+            }
+          self.context.runJob(self, processCoFunc, Array(index))
+        }
         res(0)
       case None =>
         self.filter(_._1 == key).map(_._2).collect()
