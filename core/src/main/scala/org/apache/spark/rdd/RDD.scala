@@ -918,7 +918,22 @@ abstract class RDD[T: ClassTag](
    */
   def foreach(f: T => Unit): Unit = withScope {
     val cleanF = sc.clean(f)
-    sc.runJob(this, (iter: Iterator[T]) => iter.foreach(cleanF))
+    if (!sc.getConf.isNeptuneCoroutinesEnabled()) {
+      sc.runJob(this, (iter: Iterator[T]) => iter.foreach(cleanF))
+    } else {
+      // Iterator toArray coroutine implementation
+      val foreachCoFunc: (TaskContext, Iterator[T]) ~> (Int, Unit) =
+        coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          while (itr.hasNext) {
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+            cleanF(itr.next())
+          }
+        }
+        }
+      sc.runJob(this, foreachCoFunc)
+    }
   }
 
   /**
