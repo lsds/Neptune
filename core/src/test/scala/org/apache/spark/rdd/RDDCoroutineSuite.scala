@@ -586,8 +586,10 @@ class RDDCoroutineSuite extends SparkFunSuite {
   }
 
 //  test("zipped RDDs") {
-//    val nums = sc.makeRDD(Array(1, 2, 3, 4), 2)
+//    val nums = sc.makeRDD(Array(1, 2, 3, 4), 1)
+//    val test = nums.map(_ + 1.0).glom()
 //    val zipped = nums.zip(nums.map(_ + 1.0))
+//    println(zipped.collect.mkString(", "))
 //    assert(zipped.glom().map(_.toList).collect().toList ===
 //      List(List((1, 2.0), (2, 3.0)), List((3, 4.0), (4, 5.0))))
 //
