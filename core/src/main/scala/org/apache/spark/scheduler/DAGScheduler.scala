@@ -842,6 +842,16 @@ class DAGScheduler(
   }
 
   /**
+    * Pause the give coroutine-task. It will be retrieved
+    *
+    * @return Whether the task was successfully paused
+    */
+  def pauseTaskAttempt(taskId: Long, interruptThread: Boolean): Boolean = {
+    taskScheduler.pauseTaskAttempt(taskId, interruptThread)
+  }
+
+
+  /**
    * Resubmit any failed stages. Ordinarily called after a small amount of time has passed since
    * the last fetch failure.
    */

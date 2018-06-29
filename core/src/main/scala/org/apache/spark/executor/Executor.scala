@@ -202,6 +202,15 @@ private[spark] class Executor(
     }
   }
 
+  def pauseTask(taskId: Long, interruptThread: Boolean): Unit = {
+    val taskRunner = runningTasks.get(taskId)
+    if (taskRunner != null) {
+      taskRunner.pause(interruptThread)
+    } else {
+      logWarning(s"Task: ${taskId} can not be paused as it is not running!")
+    }
+  }
+
   /**
    * Function to kill the running tasks in an executor.
    * This can be called by executor back-ends to kill the
@@ -266,6 +275,22 @@ private[spark] class Executor(
         synchronized {
           if (!finished) {
             task.kill(interruptThread, reason)
+          }
+        }
+      }
+    }
+
+    def pause(interruptThread: Boolean): Unit = {
+      logInfo(s"Executor is trying to Pause $taskName (TID $taskId)")
+      if (task != null) {
+        if (!task.isPausable) {
+          logWarning("Trying to pause non-coroutine TASK!!!!")
+          return
+        }
+        synchronized {
+          // might have finished already
+          if (!finished) {
+            task.pause()
           }
         }
       }

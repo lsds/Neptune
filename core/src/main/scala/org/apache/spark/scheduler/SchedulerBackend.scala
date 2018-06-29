@@ -45,6 +45,19 @@ private[spark] trait SchedulerBackend {
       reason: String): Unit =
     throw new UnsupportedOperationException
 
+  /**
+    * ::Neptune::
+    * Request an executor to pause a running coroutine Task
+    *
+    * @param taskId
+    * @param interruptThread
+    */
+  def pauseTask(
+      taskId: Long,
+      executorId: String,
+      interruptThread: Boolean): Unit =
+    throw new UnsupportedOperationException
+
   def isReady(): Boolean = true
 
   /**

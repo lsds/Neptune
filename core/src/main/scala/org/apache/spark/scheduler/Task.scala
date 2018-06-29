@@ -92,9 +92,7 @@ private[spark] abstract class Task[T](
         metrics,
         isPausable)
     }
-    if(isPausable) {
-      context.markPaused(true)
-    }
+
     TaskContext.setTaskContext(context)
     taskThread = Thread.currentThread()
 
@@ -220,6 +218,13 @@ private[spark] abstract class Task[T](
     if (context != null) {
       context.markInterrupted(reason)
     }
+    if (interruptThread && taskThread != null) {
+      taskThread.interrupt()
+    }
+  }
+
+  def pause(interruptThread: Boolean = false): Unit = {
+    context.markPaused(true)
     if (interruptThread && taskThread != null) {
       taskThread.interrupt()
     }

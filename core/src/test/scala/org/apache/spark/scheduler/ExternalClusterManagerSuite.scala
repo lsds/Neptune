@@ -81,6 +81,7 @@ private class DummyTaskScheduler extends TaskScheduler {
   override def cancelTasks(stageId: Int, interruptThread: Boolean): Unit = {}
   override def killTaskAttempt(
     taskId: Long, interruptThread: Boolean, reason: String): Boolean = false
+  override def pauseTaskAttempt(taskId: Long, interruptThread: Boolean): Boolean = false
   override def setDAGScheduler(dagScheduler: DAGScheduler): Unit = {}
   override def defaultParallelism(): Int = 2
   override def executorLost(executorId: String, reason: ExecutorLossReason): Unit = {}

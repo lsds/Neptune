@@ -36,6 +36,8 @@ private case class StatusUpdate(taskId: Long, state: TaskState, serializedData: 
 
 private case class KillTask(taskId: Long, interruptThread: Boolean, reason: String)
 
+private case class PauseTask(taskId: Long, interruptThread: Boolean)
+
 private case class StopExecutor()
 
 /**
@@ -72,6 +74,9 @@ private[spark] class LocalEndpoint(
 
     case KillTask(taskId, interruptThread, reason) =>
       executor.killTask(taskId, interruptThread, reason)
+
+    case PauseTask(taskId, interruptThread) =>
+      executor.pauseTask(taskId, interruptThread)
   }
 
   override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
@@ -147,6 +152,11 @@ private[spark] class LocalSchedulerBackend(
   override def killTask(
       taskId: Long, executorId: String, interruptThread: Boolean, reason: String) {
     localEndpoint.send(KillTask(taskId, interruptThread, reason))
+  }
+
+  override def pauseTask(
+       taskId: Long, executorId: String, interruptThread: Boolean): Unit = {
+    localEndpoint.send(PauseTask(taskId, interruptThread))
   }
 
   override def statusUpdate(taskId: Long, state: TaskState, serializedData: ByteBuffer) {

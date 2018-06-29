@@ -254,6 +254,18 @@ private[spark] class TaskSchedulerImpl(
     }
   }
 
+  override def pauseTaskAttempt(taskId: Long, interruptThread: Boolean): Boolean = {
+    logInfo(s"Pausing task: $taskId")
+    val execId = taskIdToExecutorId.get(taskId)
+    if (execId.isDefined) {
+      backend.pauseTask(taskId, execId.get, interruptThread)
+      true
+    } else {
+      logWarning(s"Could not pause task: $taskId because no task with that ID was found.")
+      false
+    }
+  }
+
   /**
    * Called to indicate that all task attempts (including speculated tasks) associated with the
    * given TaskSetManager have completed, so state associated with the TaskSetManager should be

@@ -2346,6 +2346,24 @@ class SparkContext(config: SparkConf) extends Logging {
   }
 
   /**
+    * Pause the given task attempt.
+    * Task must have been launch as coroutine!!
+    *
+    * @param taskId
+    * @param interruptThread
+    * @return
+    */
+  def pauseTaskAttempt(
+      taskId: Long,
+      interruptThread: Boolean = true): Boolean = {
+    if (!this.getConf.isNeptuneCoroutinesEnabled()) {
+      logError("Can not pause non Coroutine Task!!")
+      return false
+    }
+    dagScheduler.pauseTaskAttempt(taskId, interruptThread)
+  }
+
+  /**
    * Clean a closure to make it ready to be serialized and sent to tasks
    * (removes unreferenced variables in $outer's, updates REPL variables)
    * If <tt>checkSerializable</tt> is set, <tt>clean</tt> will also proactively
