@@ -429,6 +429,10 @@ private[spark] class TaskSchedulerImpl(
                 taskResultGetter.enqueueFailedTask(taskSet, tid, state, serializedData)
               }
             }
+            // Neptune: notify that the Task has been paused
+            if (TaskState.isPaused(state)) {
+              taskSet.handlePausedTask(tid)
+            }
           case None =>
             logError(
               ("Ignoring update with state %s for TID %s because its task set is gone (this is " +

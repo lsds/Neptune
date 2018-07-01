@@ -48,6 +48,9 @@ public class SparkFirehoseListener implements SparkListenerInterface {
   }
 
   @Override
+  public final void onTaskPaused(SparkListenerTaskPaused taskPaused) { onEvent(taskPaused); }
+
+  @Override
   public final void onTaskGettingResult(SparkListenerTaskGettingResult taskGettingResult) {
     onEvent(taskGettingResult);
   }

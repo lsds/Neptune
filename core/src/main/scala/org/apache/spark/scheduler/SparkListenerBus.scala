@@ -39,6 +39,8 @@ private[spark] trait SparkListenerBus
         listener.onJobEnd(jobEnd)
       case taskStart: SparkListenerTaskStart =>
         listener.onTaskStart(taskStart)
+      case taskPaused: SparkListenerTaskPaused =>
+        listener.onTaskPaused(taskPaused)
       case taskGettingResult: SparkListenerTaskGettingResult =>
         listener.onTaskGettingResult(taskGettingResult)
       case taskEnd: SparkListenerTaskEnd =>

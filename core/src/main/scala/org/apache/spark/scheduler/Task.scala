@@ -223,7 +223,7 @@ private[spark] abstract class Task[T](
     }
   }
 
-  def pause(interruptThread: Boolean = false): Unit = {
+  def pause(interruptThread: Boolean): Unit = {
     context.markPaused(true)
     if (interruptThread && taskThread != null) {
       taskThread.interrupt()

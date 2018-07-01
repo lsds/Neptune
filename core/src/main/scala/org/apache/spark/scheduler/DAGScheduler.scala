@@ -219,6 +219,13 @@ class DAGScheduler(
   }
 
   /**
+    * Called by the TaskSetManager to report task is paused.
+    */
+  def taskPaused(task: Task[_], taskInfo: TaskInfo): Unit = {
+    eventProcessLoop.post(PauseEvent(task, taskInfo))
+  }
+
+  /**
    * Called by the TaskSetManager to report that a task has completed
    * and results are being fetched remotely.
    */
@@ -915,6 +922,12 @@ class DAGScheduler(
     val stageAttemptId =
       stageIdToStage.get(task.stageId).map(_.latestInfo.attemptNumber).getOrElse(-1)
     listenerBus.post(SparkListenerTaskStart(task.stageId, stageAttemptId, taskInfo))
+  }
+
+  private[scheduler] def handlePauseEvent(task: Task[_], taskInfo: TaskInfo): Unit = {
+    val stageAttemptId =
+      stageIdToStage.get(task.stageId).map(_.latestInfo.attemptNumber).getOrElse(-1)
+    listenerBus.post(SparkListenerTaskPaused(task.stageId, stageAttemptId, taskInfo))
   }
 
   private[scheduler] def handleSpeculativeTaskSubmitted(task: Task[_]): Unit = {
@@ -1945,6 +1958,9 @@ private[scheduler] class DAGSchedulerEventProcessLoop(dagScheduler: DAGScheduler
 
     case BeginEvent(task, taskInfo) =>
       dagScheduler.handleBeginEvent(task, taskInfo)
+
+    case PauseEvent(task, taskInfo) =>
+      dagScheduler.handlePauseEvent(task, taskInfo)
 
     case SpeculativeTaskSubmitted(task) =>
       dagScheduler.handleSpeculativeTaskSubmitted(task)
