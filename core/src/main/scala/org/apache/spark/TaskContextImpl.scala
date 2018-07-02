@@ -200,12 +200,6 @@ private[spark] class TaskContextImpl(
 
   private[spark] override def isPaused(): Boolean = paused
 
-  private[spark] override def addIterator(It : Iterator[Any]): Unit = {
-    it = It
-  }
-
-  private[spark] override def iterator(): Iterator[Any] = it
-
   private[spark] override def getcoInstance(): Any <~> Any = coInstance
 
   private[spark] override def setCoInstance(co: Any <~> Any): Unit = {

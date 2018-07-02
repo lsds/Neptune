@@ -389,104 +389,104 @@ class RDDCoroutineSuite extends SparkFunSuite {
     testSplitPartitions(Array.fill(1000)(1), 250, 128)
   }
 
-//  test("coalesced RDDs") {
-//    val data = sc.parallelize(1 to 10, 10)
-//
-//    intercept[IllegalArgumentException] {
-//      data.coalesce(0)
-//    }
-//
-//    val coalesced1 = data.coalesce(2)
-//    assert(coalesced1.collect().toList === (1 to 10).toList)
-//    assert(coalesced1.glom().collect().map(_.toList).toList ===
-//      List(List(1, 2, 3, 4, 5), List(6, 7, 8, 9, 10)))
-//
-//    // Check that the narrow dependency is also specified correctly
-//    assert(coalesced1.dependencies.head.asInstanceOf[NarrowDependency[_]].getParents(0).toList ===
-//      List(0, 1, 2, 3, 4))
-//    assert(coalesced1.dependencies.head.asInstanceOf[NarrowDependency[_]].getParents(1).toList ===
-//      List(5, 6, 7, 8, 9))
-//
-//    val coalesced2 = data.coalesce(3)
-//    assert(coalesced2.collect().toList === (1 to 10).toList)
-//    assert(coalesced2.glom().collect().map(_.toList).toList ===
-//      List(List(1, 2, 3), List(4, 5, 6), List(7, 8, 9, 10)))
-//
-//    val coalesced3 = data.coalesce(10)
-//    assert(coalesced3.collect().toList === (1 to 10).toList)
-//    assert(coalesced3.glom().collect().map(_.toList).toList ===
-//      (1 to 10).map(x => List(x)).toList)
-//
-//    // If we try to coalesce into more partitions than the original RDD, it should just
-//    // keep the original number of partitions.
-//    val coalesced4 = data.coalesce(20)
-//    assert(coalesced4.collect().toList === (1 to 10).toList)
-//    assert(coalesced4.glom().collect().map(_.toList).toList ===
-//      (1 to 10).map(x => List(x)).toList)
-//
-//    // we can optionally shuffle to keep the upstream parallel
-//    val coalesced5 = data.coalesce(1, shuffle = true)
-//    val isEquals = coalesced5.dependencies.head.rdd.dependencies.head.rdd.
-//      asInstanceOf[ShuffledRDD[_, _, _]] != null
-//    assert(isEquals)
-//
-//    // when shuffling, we can increase the number of partitions
-//    val coalesced6 = data.coalesce(20, shuffle = true)
-//    assert(coalesced6.partitions.size === 20)
-//    assert(coalesced6.collect().toSet === (1 to 10).toSet)
-//  }
-//
-//  test("coalesced RDDs with locality") {
-//    val data3 = sc.makeRDD(List((1, List("a", "c")), (2, List("a", "b", "c")), (3, List("b"))))
-//    val coal3 = data3.coalesce(3)
-//    val list3 = coal3.partitions.flatMap(_.asInstanceOf[CoalescedRDDPartition].preferredLocation)
-//    assert(list3.sorted === Array("a", "b", "c"), "Locality preferences are dropped")
-//
-//    // RDD with locality preferences spread (non-randomly) over 6 machines, m0 through m5
-//    val data = sc.makeRDD((1 to 9).map(i => (i, (i to (i + 2)).map{ j => "m" + (j%6)})))
-//    val coalesced1 = data.coalesce(3)
-//    assert(coalesced1.collect().toList.sorted === (1 to 9).toList, "Data got *lost* in coalescing")
-//
-//    val splits = coalesced1.glom().collect().map(_.toList).toList
-//    assert(splits.length === 3, "Supposed to coalesce to 3 but got " + splits.length)
-//
-//    assert(splits.forall(_.length >= 1) === true, "Some partitions were empty")
-//
-//    // If we try to coalesce into more partitions than the original RDD, it should just
-//    // keep the original number of partitions.
-//    val coalesced4 = data.coalesce(20)
-//    val listOfLists = coalesced4.glom().collect().map(_.toList).toList
-//    val sortedList = listOfLists.sortWith{ (x, y) => !x.isEmpty && (y.isEmpty || (x(0) < y(0))) }
-//    assert(sortedList === (1 to 9).
-//      map{x => List(x)}.toList, "Tried coalescing 9 partitions to 20 but didn't get 9 back")
-//  }
-//
-// test("coalesced RDDs with partial locality") {
-//    // Make an RDD that has some locality preferences and some without. This can happen
-//    // with UnionRDD
-//    val data = sc.makeRDD((1 to 9).map(i => {
-//      if (i > 4) {
-//        (i, (i to (i + 2)).map { j => "m" + (j % 6) })
-//      } else {
-//        (i, Vector())
-//      }
-//    }))
-//    val coalesced1 = data.coalesce(3)
-//    assert(coalesced1.collect().toList.sorted === (1 to 9).toList, "Data got *lost* in coalescing")
-//
-//    val splits = coalesced1.glom().collect().map(_.toList).toList
-//    assert(splits.length === 3, "Supposed to coalesce to 3 but got " + splits.length)
-//
-//    assert(splits.forall(_.length >= 1) === true, "Some partitions were empty")
-//
-//    // If we try to coalesce into more partitions than the original RDD, it should just
-//    // keep the original number of partitions.
-//    val coalesced4 = data.coalesce(20)
-//    val listOfLists = coalesced4.glom().collect().map(_.toList).toList
-//    val sortedList = listOfLists.sortWith{ (x, y) => !x.isEmpty && (y.isEmpty || (x(0) < y(0))) }
-//    assert(sortedList === (1 to 9).
-//      map{x => List(x)}.toList, "Tried coalescing 9 partitions to 20 but didn't get 9 back")
-//  }
+  test("coalesced RDDs") {
+    val data = sc.parallelize(1 to 10, 10)
+
+    intercept[IllegalArgumentException] {
+      data.coalesce(0)
+    }
+
+    val coalesced1 = data.coalesce(2)
+    assert(coalesced1.collect().toList === (1 to 10).toList)
+    assert(coalesced1.glom().collect().map(_.toList).toList ===
+      List(List(1, 2, 3, 4, 5), List(6, 7, 8, 9, 10)))
+
+    // Check that the narrow dependency is also specified correctly
+    assert(coalesced1.dependencies.head.asInstanceOf[NarrowDependency[_]].getParents(0).toList ===
+      List(0, 1, 2, 3, 4))
+    assert(coalesced1.dependencies.head.asInstanceOf[NarrowDependency[_]].getParents(1).toList ===
+      List(5, 6, 7, 8, 9))
+
+    val coalesced2 = data.coalesce(3)
+    assert(coalesced2.collect().toList === (1 to 10).toList)
+    assert(coalesced2.glom().collect().map(_.toList).toList ===
+      List(List(1, 2, 3), List(4, 5, 6), List(7, 8, 9, 10)))
+
+    val coalesced3 = data.coalesce(10)
+    assert(coalesced3.collect().toList === (1 to 10).toList)
+    assert(coalesced3.glom().collect().map(_.toList).toList ===
+      (1 to 10).map(x => List(x)).toList)
+
+    // If we try to coalesce into more partitions than the original RDD, it should just
+    // keep the original number of partitions.
+    val coalesced4 = data.coalesce(20)
+    assert(coalesced4.collect().toList === (1 to 10).toList)
+    assert(coalesced4.glom().collect().map(_.toList).toList ===
+      (1 to 10).map(x => List(x)).toList)
+
+    // we can optionally shuffle to keep the upstream parallel
+    val coalesced5 = data.coalesce(1, shuffle = true)
+    val isEquals = coalesced5.dependencies.head.rdd.dependencies.head.rdd.
+      asInstanceOf[ShuffledRDD[_, _, _]] != null
+    assert(isEquals)
+
+    // when shuffling, we can increase the number of partitions
+    val coalesced6 = data.coalesce(20, shuffle = true)
+    assert(coalesced6.partitions.size === 20)
+    assert(coalesced6.collect().toSet === (1 to 10).toSet)
+  }
+
+  test("coalesced RDDs with locality") {
+    val data3 = sc.makeRDD(List((1, List("a", "c")), (2, List("a", "b", "c")), (3, List("b"))))
+    val coal3 = data3.coalesce(3)
+    val list3 = coal3.partitions.flatMap(_.asInstanceOf[CoalescedRDDPartition].preferredLocation)
+    assert(list3.sorted === Array("a", "b", "c"), "Locality preferences are dropped")
+
+    // RDD with locality preferences spread (non-randomly) over 6 machines, m0 through m5
+    val data = sc.makeRDD((1 to 9).map(i => (i, (i to (i + 2)).map{ j => "m" + (j%6)})))
+    val coalesced1 = data.coalesce(3)
+    assert(coalesced1.collect().toList.sorted === (1 to 9).toList, "Data got *lost* in coalescing")
+
+    val splits = coalesced1.glom().collect().map(_.toList).toList
+    assert(splits.length === 3, "Supposed to coalesce to 3 but got " + splits.length)
+
+    assert(splits.forall(_.length >= 1) === true, "Some partitions were empty")
+
+    // If we try to coalesce into more partitions than the original RDD, it should just
+    // keep the original number of partitions.
+    val coalesced4 = data.coalesce(20)
+    val listOfLists = coalesced4.glom().collect().map(_.toList).toList
+    val sortedList = listOfLists.sortWith{ (x, y) => !x.isEmpty && (y.isEmpty || (x(0) < y(0))) }
+    assert(sortedList === (1 to 9).
+      map{x => List(x)}.toList, "Tried coalescing 9 partitions to 20 but didn't get 9 back")
+  }
+
+ test("coalesced RDDs with partial locality") {
+    // Make an RDD that has some locality preferences and some without. This can happen
+    // with UnionRDD
+    val data = sc.makeRDD((1 to 9).map(i => {
+      if (i > 4) {
+        (i, (i to (i + 2)).map { j => "m" + (j % 6) })
+      } else {
+        (i, Vector())
+      }
+    }))
+    val coalesced1 = data.coalesce(3)
+    assert(coalesced1.collect().toList.sorted === (1 to 9).toList, "Data got *lost* in coalescing")
+
+    val splits = coalesced1.glom().collect().map(_.toList).toList
+    assert(splits.length === 3, "Supposed to coalesce to 3 but got " + splits.length)
+
+    assert(splits.forall(_.length >= 1) === true, "Some partitions were empty")
+
+    // If we try to coalesce into more partitions than the original RDD, it should just
+    // keep the original number of partitions.
+    val coalesced4 = data.coalesce(20)
+    val listOfLists = coalesced4.glom().collect().map(_.toList).toList
+    val sortedList = listOfLists.sortWith{ (x, y) => !x.isEmpty && (y.isEmpty || (x(0) < y(0))) }
+    assert(sortedList === (1 to 9).
+      map{x => List(x)}.toList, "Tried coalescing 9 partitions to 20 but didn't get 9 back")
+  }
 
   test("coalesced RDDs with locality, large scale (10K partitions)") {
     // large scale experiment
@@ -585,22 +585,20 @@ class RDDCoroutineSuite extends SparkFunSuite {
     assert(coalesced.partitions.length == targetLen)
   }
 
-//  test("zipped RDDs") {
-//    val nums = sc.makeRDD(Array(1, 2, 3, 4), 1)
-//    val test = nums.map(_ + 1.0).glom()
-//    val zipped = nums.zip(nums.map(_ + 1.0))
-//    println(zipped.collect.mkString(", "))
-//    assert(zipped.glom().map(_.toList).collect().toList ===
-//      List(List((1, 2.0), (2, 3.0)), List((3, 4.0), (4, 5.0))))
-//
-//    intercept[IllegalArgumentException] {
-//      nums.zip(sc.parallelize(1 to 4, 1)).collect()
-//    }
-//
-//    intercept[SparkException] {
-//      nums.zip(sc.parallelize(1 to 5, 2)).collect()
-//    }
-//  }
+  test("zipped RDDs") {
+    val nums = sc.makeRDD(Array(1, 2, 3, 4), 2)
+    val zipped = nums.zip(nums.map(_ + 1.0))
+    assert(zipped.glom().map(_.toList).collect().toList ===
+      List(List((1, 2.0), (2, 3.0)), List((3, 4.0), (4, 5.0))))
+
+    intercept[IllegalArgumentException] {
+      nums.zip(sc.parallelize(1 to 4, 1)).collect()
+    }
+
+    intercept[SparkException] {
+      nums.zip(sc.parallelize(1 to 5, 2)).collect()
+    }
+  }
 
   test("partition pruning") {
     val data = sc.parallelize(1 to 10, 10)
