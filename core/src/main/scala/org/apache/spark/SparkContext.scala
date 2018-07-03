@@ -2347,7 +2347,7 @@ class SparkContext(config: SparkConf) extends Logging {
 
   /**
     * Pause the given task attempt.
-    * Task must have been launch as coroutine!!
+    * Task must have been launched as coroutine!!
     *
     * @param taskId
     * @param interruptThread
@@ -2361,6 +2361,22 @@ class SparkContext(config: SparkConf) extends Logging {
       return false
     }
     dagScheduler.pauseTaskAttempt(taskId, interruptThread)
+  }
+
+  /**
+    * Resume given task attempt.
+    * Task myst have been launched as corouine and be in paused state!
+    *
+    * @param taskId
+    * @return
+    */
+  def resumeTaskAttempt(
+      taskId: Long): Boolean = {
+    if (!this.getConf.isNeptuneCoroutinesEnabled()) {
+      logError("Can not resume non Coroutine Task!!")
+      return false
+    }
+    dagScheduler.resumeTaskAttempt(taskId)
   }
 
   /**

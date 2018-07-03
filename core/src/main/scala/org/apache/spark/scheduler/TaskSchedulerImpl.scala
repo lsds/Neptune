@@ -100,6 +100,9 @@ private[spark] class TaskSchedulerImpl(
   // Incrementing task IDs
   val nextTaskId = new AtomicLong(0)
 
+  // IDs of the tasks paused on each executor
+  private val executorIdToPausedTaskIds = new HashMap[String, HashSet[Long]]
+
   // IDs of the tasks running on each executor
   private val executorIdToRunningTaskIds = new HashMap[String, HashSet[Long]]
 
@@ -256,12 +259,37 @@ private[spark] class TaskSchedulerImpl(
 
   override def pauseTaskAttempt(taskId: Long, interruptThread: Boolean): Boolean = {
     logInfo(s"Pausing task: $taskId")
-    val execId = taskIdToExecutorId.get(taskId)
-    if (execId.isDefined) {
-      backend.pauseTask(taskId, execId.get, interruptThread)
-      true
+    val execIdOpt = taskIdToExecutorId.get(taskId)
+    if (execIdOpt.isDefined) {
+      val execId = execIdOpt.get
+      if (executorIdToRunningTaskIds.contains(execId)) {
+        executorIdToPausedTaskIds(execId).add(taskId)
+        executorIdToRunningTaskIds(execId).remove(taskId)
+        backend.pauseTask(taskId, execId, interruptThread)
+        return true
+      }
+      logWarning(s"Could not pause non-running task: $taskId")
+      false
     } else {
-      logWarning(s"Could not pause task: $taskId because no task with that ID was found.")
+      logWarning(s"Could not pause non-existing task: $taskId")
+      false
+    }
+  }
+
+  override def resumeTaskAttempt(taskId: Long): Boolean = {
+    logInfo(s"Resuming task: ${taskId}")
+    val execIdOpt = taskIdToExecutorId.get(taskId)
+    if (execIdOpt.isDefined) {
+      val execId = execIdOpt.get
+      if (executorIdToPausedTaskIds.contains(execId)) {
+        executorIdToRunningTaskIds(execId).add(taskId)
+        executorIdToPausedTaskIds(execId).remove(taskId)
+        backend.resumeTask(taskId, execId)
+        return true
+      }
+      false
+    } else {
+      logWarning(s"Could not resume task ${taskId} as it was not found!")
       false
     }
   }
@@ -337,6 +365,7 @@ private[spark] class TaskSchedulerImpl(
         executorAdded(o.executorId, o.host)
         executorIdToHost(o.executorId) = o.host
         executorIdToRunningTaskIds(o.executorId) = HashSet[Long]()
+        executorIdToPausedTaskIds(o.executorId) = HashSet[Long]()
         newExecAvail = true
       }
       for (rack <- getRackForHost(o.host)) {

@@ -58,6 +58,11 @@ private[spark] trait SchedulerBackend {
       interruptThread: Boolean): Unit =
     throw new UnsupportedOperationException
 
+  def resumeTask(
+       taskId: Long,
+       executorId: String): Unit =
+    throw new UnsupportedOperationException
+
   def isReady(): Boolean = true
 
   /**

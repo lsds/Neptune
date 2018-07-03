@@ -849,7 +849,7 @@ class DAGScheduler(
   }
 
   /**
-    * Pause the give coroutine-task. It will be retrieved
+    * Pause given coroutine-task. It will be retrieved
     *
     * @return Whether the task was successfully paused
     */
@@ -857,6 +857,14 @@ class DAGScheduler(
     taskScheduler.pauseTaskAttempt(taskId, interruptThread)
   }
 
+  /**
+    * Resume given coroutine-task. It will be retrieved
+    *
+    * @return Whether the task was successfully resumed
+    */
+  def resumeTaskAttempt(taskId: Long): Boolean = {
+    taskScheduler.resumeTaskAttempt(taskId)
+  }
 
   /**
    * Resubmit any failed stages. Ordinarily called after a small amount of time has passed since

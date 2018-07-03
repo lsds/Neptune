@@ -63,6 +63,8 @@ private[spark] trait TaskScheduler {
 
   def pauseTaskAttempt(taskId: Long, interruptThread: Boolean): Boolean
 
+  def resumeTaskAttempt(taskId: Long): Boolean
+
   // Set the DAG scheduler for upcalls. This is guaranteed to be set before submitTasks is called.
   def setDAGScheduler(dagScheduler: DAGScheduler): Unit
 
