@@ -2033,16 +2033,16 @@ class SparkContext(config: SparkConf) extends Logging {
   }
 
   /**
-    * ::Neptune::
-    * Run a coroutine funtion on a given set of partitions in an RDD and pass the results to the given
-    * handler function.
-    *
-    * @param rdd target RDD to run tasks on
-    * @param func a coroutine function to run on each partition of the RDD
-    * @param partitions set of partitions to run on; some jobs may not want to compute on all
-    * partitions of the target RDD, e.g. for operations like `first()`
-    * @param resultHandler callback to pass each result to
-    */
+   * ::Neptune::
+   * Run a coroutine funtion on a given set of partitions in an RDD and pass the results to the given
+   * handler function.
+   *
+   * @param rdd target RDD to run tasks on
+   * @param func a coroutine function to run on each partition of the RDD
+   * @param partitions set of partitions to run on; some jobs may not want to compute on all
+   * partitions of the target RDD, e.g. for operations like `first()`
+   * @param resultHandler callback to pass each result to
+   */
   def runCoroutineJob[T, U: ClassTag](
       rdd: RDD[T],
       func: (TaskContext, Iterator[T]) ~> (Int, U),
@@ -2084,17 +2084,16 @@ class SparkContext(config: SparkConf) extends Logging {
   }
 
   /**
-    * ::Neptune::
-    * Run a coroutine function on a given set of partitions in an RDD and return the results in an array.
-    *
-    * @param rdd target RDD to run tasks on
-    * @param func a coroutine function to run on each partition of the RDD
-    * @param partitions set of partitions to run on; some jobs may not want to compute on all
-    * partitions of the target RDD, e.g. for operations like `first()`
-    * @return in-memory collection with a result of the job (each collection element will contain
-    * a result from one partition)
-    */
-
+   * ::Neptune::
+   * Run a coroutine function on a given set of partitions in an RDD and return the results in an array.
+   *
+   * @param rdd target RDD to run tasks on
+   * @param func a coroutine function to run on each partition of the RDD
+   * @param partitions set of partitions to run on; some jobs may not want to compute on all
+   * partitions of the target RDD, e.g. for operations like `first()`
+   * @return in-memory collection with a result of the job (each collection element will contain
+   * a result from one partition)
+   */
   def runJob[T, U: ClassTag](
       rdd: RDD[T],
       func: (TaskContext, Iterator[T]) ~> (Int, U),
@@ -2148,16 +2147,15 @@ class SparkContext(config: SparkConf) extends Logging {
   }
 
   /**
-    * ::Neptune::
-    * Run a coroutine-job on all partitions in an RDD and return the results in an array.
-    *
-    * @param rdd
-    * @param func
-    * @tparam T
-    * @tparam U
-    * @return
-    */
-
+   * ::Neptune::
+   * Run a coroutine-job on all partitions in an RDD and return the results in an array.
+   *
+   * @param rdd
+   * @param func
+   * @tparam T
+   * @tparam U
+   * @return
+   */
   def runJob[T, U: ClassTag](rdd: RDD[T], func: (TaskContext, Iterator[T]) ~> (Int, U)): Array[U] = {
     runJob(rdd, func, 0 until rdd.partitions.length)
   }
@@ -2346,13 +2344,13 @@ class SparkContext(config: SparkConf) extends Logging {
   }
 
   /**
-    * Pause the given task attempt.
-    * Task must have been launched as coroutine!!
-    *
-    * @param taskId
-    * @param interruptThread
-    * @return
-    */
+   * Pause the given task attempt.
+   * Task must have been launched as coroutine!!
+   *
+   * @param taskId
+   * @param interruptThread
+   * @return
+   */
   def pauseTaskAttempt(
       taskId: Long,
       interruptThread: Boolean = true): Boolean = {
@@ -2364,12 +2362,12 @@ class SparkContext(config: SparkConf) extends Logging {
   }
 
   /**
-    * Resume given task attempt.
-    * Task myst have been launched as corouine and be in paused state!
-    *
-    * @param taskId
-    * @return
-    */
+   * Resume given task attempt.
+   * Task myst have been launched as corouine and be in paused state!
+   *
+   * @param taskId
+   * @return
+   */
   def resumeTaskAttempt(
       taskId: Long): Boolean = {
     if (!this.getConf.isNeptuneCoroutinesEnabled()) {

@@ -188,11 +188,7 @@ private[spark] class TaskContextImpl(
 
   private[spark] def fetchFailed: Option[FetchFailedException] = _fetchFailedException
 
-  /**
-    * ::Neptune::
-    * Cooperative task pausing
-    */
-
+  /** ::Neptune:: Cooperative task pausing */
   private[spark] override def markPaused(toPause: Boolean): Unit = {
     if (paused == toPause) return
     paused = toPause

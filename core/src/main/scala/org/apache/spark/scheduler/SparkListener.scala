@@ -195,8 +195,8 @@ private[spark] trait SparkListenerInterface {
   def onTaskStart(taskStart: SparkListenerTaskStart): Unit
 
   /**
-    * Called when a task is paused
-    */
+   * Called when a task is paused
+   */
   def onTaskPaused(taskPaused: SparkListenerTaskPaused): Unit
 
   /**

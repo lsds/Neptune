@@ -766,8 +766,8 @@ private[spark] class TaskSetManager(
   }
 
   /**
-    * Notifies the DAGScheduler that the task has been paused.
-    */
+   * Notifies the DAGScheduler that the task has been paused.
+   */
   def handlePausedTask(tid: Long): Unit = {
     val info = taskInfos(tid)
     val index = info.index

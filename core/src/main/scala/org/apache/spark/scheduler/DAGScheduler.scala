@@ -219,8 +219,8 @@ class DAGScheduler(
   }
 
   /**
-    * Called by the TaskSetManager to report task is paused.
-    */
+   * Called by the TaskSetManager to report task is paused.
+   */
   def taskPaused(task: Task[_], taskInfo: TaskInfo): Unit = {
     eventProcessLoop.post(PauseEvent(task, taskInfo))
   }
@@ -617,22 +617,22 @@ class DAGScheduler(
   }
 
   /**
-    * ::Neptune::
-    * Submit an action job to the scheduler that will run as a Coroutine Task
-    *
-    * @param rdd target RDD to run tasks on
-    * @param func a coroutine function to run on each partition of the RDD
-    * @param partitions set of partitions to run on; some jobs may not want to compute on all
-    *   partitions of the target RDD, e.g. for operations like first()
-    * @param callSite where in the user program this job was called
-    * @param resultHandler callback to pass each result to
-    * @param properties scheduler properties to attach to this job, e.g. fair scheduler pool name
-    *
-    * @return a JobWaiter object that can be used to block until the job finishes executing
-    *         or can be used to cancel the job.
-    *
-    * @throws IllegalArgumentException when partitions ids are illegal
-    */
+   * ::Neptune::
+   * Submit an action job to the scheduler that will run as a Coroutine Task
+   *
+   * @param rdd target RDD to run tasks on
+   * @param func a coroutine function to run on each partition of the RDD
+   * @param partitions set of partitions to run on; some jobs may not want to compute on all
+   *   partitions of the target RDD, e.g. for operations like first()
+   * @param callSite where in the user program this job was called
+   * @param resultHandler callback to pass each result to
+   * @param properties scheduler properties to attach to this job, e.g. fair scheduler pool name
+   *
+   * @return a JobWaiter object that can be used to block until the job finishes executing
+   *         or can be used to cancel the job.
+   *
+   * @throws IllegalArgumentException when partitions ids are illegal
+   */
   def submitCoroutineJob[T, U](
                        rdd: RDD[T],
                        func: (TaskContext, Iterator[T]) ~> (Int, U),
@@ -702,19 +702,19 @@ class DAGScheduler(
   }
 
   /**
-    * Run an action coroutine job on the given RDD and pass all the results to the resultHandler function as
-    * they arrive.
-    *
-    * @param rdd target RDD to run tasks on
-    * @param func a coroutine function to run on each partition of the RDD
-    * @param partitions set of partitions to run on; some jobs may not want to compute on all
-    *   partitions of the target RDD, e.g. for operations like first()
-    * @param callSite where in the user program this job was called
-    * @param resultHandler callback to pass each result to
-    * @param properties scheduler properties to attach to this job, e.g. fair scheduler pool name
-    *
-    * @note Throws `Exception` when the job fails
-    */
+   * Run an action coroutine job on the given RDD and pass all the results to the resultHandler function as
+   * they arrive.
+   *
+   * @param rdd target RDD to run tasks on
+   * @param func a coroutine function to run on each partition of the RDD
+   * @param partitions set of partitions to run on; some jobs may not want to compute on all
+   *   partitions of the target RDD, e.g. for operations like first()
+   * @param callSite where in the user program this job was called
+   * @param resultHandler callback to pass each result to
+   * @param properties scheduler properties to attach to this job, e.g. fair scheduler pool name
+   *
+   * @note Throws `Exception` when the job fails
+   */
   def runCoroutineJob[T, U](
                     rdd: RDD[T],
                     func: (TaskContext, Iterator[T]) ~> (Int, U),
@@ -849,19 +849,19 @@ class DAGScheduler(
   }
 
   /**
-    * Pause given coroutine-task. It will be retrieved
-    *
-    * @return Whether the task was successfully paused
-    */
+   * Pause given coroutine-task. It will be retrieved
+   *
+   * @return Whether the task was successfully paused
+   */
   def pauseTaskAttempt(taskId: Long, interruptThread: Boolean): Boolean = {
     taskScheduler.pauseTaskAttempt(taskId, interruptThread)
   }
 
   /**
-    * Resume given coroutine-task. It will be retrieved
-    *
-    * @return Whether the task was successfully resumed
-    */
+   * Resume given coroutine-task. It will be retrieved
+   *
+   * @return Whether the task was successfully resumed
+   */
   def resumeTaskAttempt(taskId: Long): Boolean = {
     taskScheduler.resumeTaskAttempt(taskId)
   }
