@@ -50,7 +50,7 @@ class MicroBatchExecution(
     trigger, triggerClock, outputMode, deleteCheckpointOnStop) {
 
   @volatile protected var sources: Seq[BaseStreamingSource] = Seq.empty
-  @volatile var aq = new AdaptiveQueue[Int](5)
+//  @volatile var aq = new AdaptiveQueue[Int](5)
 
   private val triggerExecutor = trigger match {
     case t: ProcessingTime => ProcessingTimeExecutor(t, triggerClock)
@@ -393,18 +393,7 @@ class MicroBatchExecution(
         case (source: Source, available)
           if committedOffsets.get(source).map(_ != available).getOrElse(true) =>
           val current = committedOffsets.get(source)
-          val batch = {
-            if (sparkSession.sparkContext.conf.isAdaptiveTasksEnabled()) {
-              aq.append(triggerExecutor.lateBatch)
-              triggerExecutor.lateBatch = 0
-              logWarning(s"Adapting enabled! TO ADAPT? ${aq.toAdapt()}")
-              logWarning(s" AQ: ${aq.list.mkString}")
-              source.getBatch(current, available, aq.toAdapt(toClean = true))
-            }
-            else {
-              source.getBatch(current, available)
-            }
-          }
+          val batch = source.getBatch(current, available)
           assert(batch.isStreaming,
             s"DataFrame returned by getBatch from $source did not have isStreaming=true\n" +
               s"${batch.queryExecution.logical}")
