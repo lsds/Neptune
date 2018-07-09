@@ -18,6 +18,7 @@
 package org.apache.spark.scheduler
 
 import java.nio.ByteBuffer
+import java.util.Properties
 
 import scala.collection.mutable.HashMap
 
@@ -146,6 +147,24 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     assert(count > 0)
     assert(count < numTrials)
     assert(!failedTaskSet)
+  }
+
+  test("MultiJob Scheduler with custom Neptune priorities") {
+    val taskScheduler = setupScheduler()
+    val numFreeCores = 1
+
+    val lowPriority: Properties = new Properties()
+    lowPriority.setProperty("neptune_pri", "10")
+    val taskSetLowPri = FakeTask.createTaskSet(numTasks = 1, stageId = 0, stageAttemptId = 0, props = lowPriority)
+
+    val highPriority: Properties = new Properties()
+    highPriority.setProperty("neptune_pri", "20")
+    val taskSetHighPri = FakeTask.createTaskSet(numTasks = 1, stageId = 1, stageAttemptId = 0, props = highPriority)
+
+    taskScheduler.submitTasks(taskSetLowPri)
+    taskScheduler.submitTasks(taskSetHighPri)
+
+//    taskScheduler.resourceOffers()
   }
 
   test("Scheduler correctly accounts for multiple CPUs per task") {
