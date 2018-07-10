@@ -204,7 +204,7 @@ abstract class TaskContext extends Serializable {
    */
   private[spark] def isPausable(): Boolean
   private[spark] def markPaused(toPause: Boolean): Unit
-  private[spark] def isPaused(): Boolean
+  def isPaused(): Boolean
 
   private[spark] def getcoInstance(): Any <~> Any
   private[spark] def setCoInstance(co: Any <~> Any): Unit

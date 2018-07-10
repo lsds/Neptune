@@ -194,7 +194,7 @@ private[spark] class TaskContextImpl(
     paused = toPause
   }
 
-  private[spark] override def isPaused(): Boolean = paused
+  override def isPaused(): Boolean = paused
 
   private[spark] override def getcoInstance(): Any <~> Any = coInstance
 
