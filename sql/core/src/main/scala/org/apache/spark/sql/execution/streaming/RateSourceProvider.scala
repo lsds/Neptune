@@ -137,11 +137,7 @@ class RateStreamSource(
   import RateStreamSource._
 
   val clock = if (useManualClock) new ManualClock else new SystemClock
-  var parallelism = if (sqlContext.sparkContext.conf.neptunePartitionEnabled()) {
-    sqlContext.sparkContext.conf.neptuneGetPartitionSize()
-  } else {
-    numPartitions
-  }
+  var parallelism = numPartitions
 
   private val maxSeconds = Long.MaxValue / rowsPerSecond
 

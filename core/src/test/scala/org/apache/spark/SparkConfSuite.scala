@@ -125,12 +125,14 @@ class SparkConfSuite extends SparkFunSuite with LocalSparkContext with ResetSyst
     assert(conf.isNeptuneTwoLevelSchedulingEnabled === true)
     assert(conf.getNeptuneTwoLevelSchedulingNum() === 5)
 
-    // PartitionSize Disabled by default
-    assert(conf.neptunePartitionEnabled() === false)
-    conf.neptuneSetPartitionSize(5)
-    assert(conf.neptuneGetPartitionSize() === 5)
-    conf.neptuneSetPartitionSize(10)
-    assert(conf.neptuneGetPartitionSize() === 10)
+    // Task Policy PAUSE by default
+    assert(conf.getNeptuneTaskPolicy() === TaskState.PAUSED)
+    conf.setNeptuneTaskPolicy("kill")
+    assert(conf.getNeptuneTaskPolicy() === TaskState.KILLED)
+    conf.setNeptuneTaskPolicy("blah")
+    assert(conf.getNeptuneTaskPolicy() === TaskState.PAUSED)
+    conf.setNeptuneTaskPolicy("")
+    assert(conf.getNeptuneTaskPolicy() === TaskState.PAUSED)
   }
 
   test("creating SparkContext without master and app name") {

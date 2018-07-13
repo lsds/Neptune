@@ -440,20 +440,20 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
     getOption("spark.neptune.task.coroutines") match {
       case Some("true") => true
       case Some("false") => false
-      case None => false
+      case _ => false
     }
   }
 
-  def neptuneSetPartitionSize(npartitions: Int): Unit = {
-    set("spark.neptune.partition.size", s"$npartitions")
+  def setNeptuneTaskPolicy(taskPolicy: String): Unit = {
+    set("spark.neptune.task.policy", taskPolicy)
   }
 
-  def neptuneGetPartitionSize(): Int = {
-    getOption("spark.neptune.partition.size").map(_.toInt).getOrElse(0)
-  }
-
-  def neptunePartitionEnabled(): Boolean = {
-    neptuneGetPartitionSize() > 0
+  def getNeptuneTaskPolicy(): TaskState.TaskState = {
+    getOption("spark.neptune.task.policy") match {
+      case Some("pause") => TaskState.PAUSED
+      case Some("kill") => TaskState.KILLED
+      case _ => TaskState.PAUSED
+    }
   }
 
   def enableNeptuneTwoLevelScheduling(nschedulers: Int): Unit = {

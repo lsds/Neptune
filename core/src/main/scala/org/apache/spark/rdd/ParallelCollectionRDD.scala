@@ -94,12 +94,6 @@ private[spark] class ParallelCollectionRDD[T: ClassTag](
   // UPDATE: A parallel collection can be checkpointed to HDFS, which achieves this goal.
 
   override def getPartitions: Array[Partition] = {
-    numSlices = if (conf.neptunePartitionEnabled()) {
-      conf.neptuneGetPartitionSize()
-    }
-    else {
-      numSlices
-    }
     val slices = ParallelCollectionRDD.slice(data, numSlices).toArray
     slices.indices.map(i => new ParallelCollectionPartition(id, i, slices(i))).toArray
   }
