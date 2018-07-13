@@ -78,10 +78,19 @@ private[spark] class LocalEndpoint(
       executor.killTask(taskId, interruptThread, reason)
 
     case PauseTask(taskId, interruptThread) =>
-      executor.pauseTask(taskId, interruptThread)
+      if (executor.pauseTask(taskId, interruptThread)) {
+        freeCores += scheduler.CPUS_PER_TASK
+        // fast-forward propagation
+        // at this point we might see more tasks running than in reality
+        // after the next PausedEvent propagation number gets back to normal
+        reviveOffers()
+      }
+
 
     case ResumeTask(taskId) =>
-      executor.resumeTask(taskId)
+      if (executor.resumeTask(taskId)) {
+        freeCores -= scheduler.CPUS_PER_TASK
+      }
   }
 
   override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
