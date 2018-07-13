@@ -174,6 +174,7 @@ private[spark] class Executor(
   private[executor] def numRunningTasks: Int = runningTasks.size()
 
   def launchTask(context: ExecutorBackend, taskDescription: TaskDescription): Unit = {
+    logInfo(s"Launching Task ${taskDescription.taskId}")
     val tr = new TaskRunner(context, taskDescription)
     runningTasks.put(taskDescription.taskId, tr)
     threadPool.execute(tr)
@@ -207,26 +208,38 @@ private[spark] class Executor(
 
   var pauseStart: Long = 0L
 
-  def pauseTask(taskId: Long, interruptThread: Boolean): Unit = {
+  def pauseTask(taskId: Long, interruptThread: Boolean): Boolean = {
     val tr: TaskRunner = runningTasks.get(taskId)
     if (tr != null) {
       pauseStart = System.nanoTime()
-      tr.pause(interruptThread)
-      pausedTasks.put(tr.taskId, tr)
+      if (tr.pause(interruptThread)) {
+        pausedTasks.put(tr.taskId, runningTasks.remove(taskId))
+        return true
+      }
     } else {
-      logWarning(s"Task: ${taskId} can not be paused as it is not running!")
+      logWarning(s"Task ${taskId} can not be paused as it is not running!")
     }
+    return false
   }
 
-  def resumeTask(taskId: Long): Unit = {
+  def resumeTask(taskId: Long): Boolean = {
+    logInfo(s"Trying to Resume Task ${taskId}")
     val tr: TaskRunner = pausedTasks.remove(taskId)
     if (tr != null) {
-      tr.task.context.markPaused(false)
-      runningTasks.put(taskId, tr)
-      threadPool.execute(tr)
+      val trx: TaskContext = tr.task.context
+      if (trx != null) {
+        trx.markPaused(false)
+        runningTasks.put(taskId, tr)
+        threadPool.execute(tr)
+        return true
+      }
+      else {
+        logWarning(s"Task ${taskId} can not be resumed - context was null")
+      }
     } else {
-      logWarning(s"Task: ${taskId} can not be resumed - not found on the pausedTask map")
+      logWarning(s"Task ${taskId} can not be resumed - not found on the pausedTask map")
     }
+    return false
   }
 
   /**
@@ -287,7 +300,7 @@ private[spark] class Executor(
     @volatile var task: Task[Any] = _
 
     def kill(interruptThread: Boolean, reason: String): Unit = {
-      logInfo(s"Executor is trying to kill $taskName (TID $taskId), reason: $reason")
+      logInfo(s"Trying to kill $taskName (TID $taskId), reason: $reason")
       reasonIfKilled = Some(reason)
       if (task != null) {
         synchronized {
@@ -298,20 +311,26 @@ private[spark] class Executor(
       }
     }
 
-    def pause(interruptThread: Boolean): Unit = {
-      logInfo(s"Executor is trying to Pause $taskName (TID $taskId)")
+    def pause(interruptThread: Boolean): Boolean = {
+      logInfo(s"Trying to Pause $taskName (TID $taskId)")
       if (task != null) {
         if (!task.isPausable) {
           logWarning("Trying to pause non-coroutine TASK!!!!")
-          return
+          return false
         }
         synchronized {
           // might have finished already
           if (!finished) {
-            task.pause(interruptThread)
+            if (task.context == null) {
+              logWarning("Task context empty - not run yet")
+            } else {
+              task.pause(interruptThread)
+              return true
+            }
           }
         }
       }
+      return false
     }
 
     /**
@@ -388,7 +407,7 @@ private[spark] class Executor(
         var threwException = true
         val value = try {
           if (task.isPausable) {
-            logInfo(s"Running Pausable Task: ${task.jobId}")
+            logInfo(s"Running Pausable Task (TID $taskId)")
               task.run(
                 taskAttemptId = taskId,
                 attemptNumber = taskDescription.attemptNumber,
@@ -400,12 +419,11 @@ private[spark] class Executor(
               task.context.getcoInstance().result
             } else {
               // coroutine pause/yieldval case
-              logDebug(s"Took ${(System.nanoTime()-pauseStart) / 1e6}")
-              logDebug(s"Pausable task yielded: ${task.context.getcoInstance().getValue}")
+              logInfo(s"Task yielded in ${(System.nanoTime()-pauseStart) / 1e6} ms")
               ()
             }
           } else {
-            logInfo(s"Running normal Task: ${task.jobId}")
+            logInfo(s"Running normal Task (TID $taskId)")
             val res = task.run(
               taskAttemptId = taskId,
               attemptNumber = taskDescription.attemptNumber,
