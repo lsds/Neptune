@@ -94,6 +94,9 @@ private[spark] class TaskSetManager(
   val weight = 1
   val minShare = 0
   var priority = taskSet.priority
+  var neptunePriority: Int = if (taskSet.properties.get("neptune_pri") != null) {
+    Integer.parseInt(taskSet.properties.get("neptune_pri").toString)
+  } else 0
   var stageId = taskSet.stageId
   val name = "TaskSet_" + taskSet.id
   var parent: Pool = null
@@ -107,8 +110,10 @@ private[spark] class TaskSetManager(
   }
 
   private[scheduler] val runningTasksSet = new HashSet[Long]
+  private[scheduler] val pausedTasksSet = new HashSet[Long]
 
   override def runningTasks: Int = runningTasksSet.size
+  override def pausedTasks: Int = pausedTasksSet.size
 
   def someAttemptSucceeded(tid: Long): Boolean = {
     successful(taskInfos(tid).index)
@@ -771,6 +776,8 @@ private[spark] class TaskSetManager(
   def handlePausedTask(tid: Long): Unit = {
     val info = taskInfos(tid)
     val index = info.index
+    addPausedTask(tid)
+    removeRunningTask(tid)
     sched.dagScheduler.taskPaused(tasks(index), info)
   }
 
@@ -899,10 +906,27 @@ private[spark] class TaskSetManager(
     }
   }
 
+  /** If the given task ID is not in the set of paused tasks, adds it.
+   *
+   * Used to keep track of the number of paused/running tasks, for enforcing scheduling policies.
+   */
+  def addPausedTask(tid: Long): Unit = {
+    if (pausedTasksSet.add(tid) && parent != null) {
+      parent.decreaseRunningTasks(1)
+    }
+  }
+
   /** If the given task ID is in the set of running tasks, removes it. */
   def removeRunningTask(tid: Long) {
     if (runningTasksSet.remove(tid) && parent != null) {
       parent.decreaseRunningTasks(1)
+    }
+  }
+
+  /** If the given task ID is in the set of paused tasks, removes it. */
+  def removePausedTask(tid: Long): Unit = {
+    if (pausedTasksSet.remove(tid) && parent != null) {
+      parent.decreasePausedTasks(1)
     }
   }
 

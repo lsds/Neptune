@@ -29,14 +29,14 @@ private[spark] trait SchedulingAlgorithm {
 }
 
 
-private[spark] class NaptuneSchedulingAlgorithm extends SchedulingAlgorithm with Logging{
+private[spark] class NeptuneSchedulingAlgorithm extends SchedulingAlgorithm with Logging{
   override def comparator(s1: Schedulable, s2: Schedulable): Boolean = {
-    logWarning(s"PANOS s1: ${s1.name}")
-    logWarning(s"PANOS s2: ${s2.name}")
+    logDebug(s"Neptune comparator scheduling priority s1: ${s1.neptunePriority}, s2: ${s2.neptunePriority}")
 
-    val priority1 = s1.priority
-    val priority2 = s2.priority
+    val priority1 = s1.neptunePriority
+    val priority2 = s2.neptunePriority
     var res = math.signum(priority1 - priority2)
+    // if Neptune priorities are the same compare stageIds
     if (res == 0) {
       val stageId1 = s1.stageId
       val stageId2 = s2.stageId

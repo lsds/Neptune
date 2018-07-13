@@ -40,7 +40,9 @@ private[spark] class Pool(
   val weight = initWeight
   val minShare = initMinShare
   var runningTasks = 0
+  var pausedTasks = 0
   val priority = 0
+  val neptunePriority = 0
 
   // A pool's stage id is used to break the tie in scheduling.
   var stageId = -1
@@ -54,7 +56,7 @@ private[spark] class Pool(
       case SchedulingMode.FIFO =>
         new FIFOSchedulingAlgorithm()
       case SchedulingMode.NEPTUNE =>
-        new NaptuneSchedulingAlgorithm()
+        new NeptuneSchedulingAlgorithm()
       case _ =>
         val msg = s"Unsupported scheduling mode: $schedulingMode. Use FIFO/FAIR or Neptune instead."
         throw new IllegalArgumentException(msg)
@@ -115,10 +117,24 @@ private[spark] class Pool(
     }
   }
 
+  def increasePausedTasks(taskNum: Int): Unit = {
+    pausedTasks += taskNum
+    if (parent != null) {
+      parent.increasePausedTasks(taskNum)
+    }
+  }
+
   def decreaseRunningTasks(taskNum: Int) {
     runningTasks -= taskNum
     if (parent != null) {
       parent.decreaseRunningTasks(taskNum)
+    }
+  }
+
+  def decreasePausedTasks(taskNum: Int): Unit = {
+    pausedTasks -= taskNum
+    if (parent != null) {
+      parent.decreasePausedTasks(taskNum)
     }
   }
 }
