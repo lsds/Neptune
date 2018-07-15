@@ -209,12 +209,14 @@ private[spark] class Executor(
   var pauseStart: Long = 0L
 
   def pauseTask(taskId: Long, interruptThread: Boolean): Boolean = {
-    val tr: TaskRunner = runningTasks.get(taskId)
-    if (tr != null) {
+    val taskRunner: TaskRunner = runningTasks.get(taskId)
+    if (taskRunner != null) {
       pauseStart = System.nanoTime()
-      if (tr.pause(interruptThread)) {
-        pausedTasks.put(tr.taskId, runningTasks.remove(taskId))
+      if (taskRunner.pause(interruptThread)) {
+        pausedTasks.put(taskRunner.taskId, runningTasks.remove(taskId))
         return true
+      } else {
+        logWarning(s"TaskRunner ${taskId} could not be paused")
       }
     } else {
       logWarning(s"Task ${taskId} can not be paused as it is not running!")
@@ -313,20 +315,25 @@ private[spark] class Executor(
 
     def pause(interruptThread: Boolean): Boolean = {
       logInfo(s"Trying to Pause $taskName (TID $taskId)")
-      if (task != null) {
+      if (task == null) {
+        logWarning("Cannot pause non running (null) Task")
+        return false
+      } else {
         if (!task.isPausable) {
-          logWarning("Trying to pause non-coroutine TASK!!!!")
+          logWarning("Cannot pause non-coroutine Task")
           return false
         }
         synchronized {
           // might have finished already
           if (!finished) {
             if (task.context == null) {
-              logWarning("Task context empty - not run yet")
+              logWarning("Cannot pause empty context Task (not running)")
             } else {
               task.pause(interruptThread)
               return true
             }
+          } else {
+            logWarning("Cannot pause finished Task")
           }
         }
       }
