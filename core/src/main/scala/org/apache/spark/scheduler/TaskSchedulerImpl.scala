@@ -21,6 +21,7 @@ import java.nio.ByteBuffer
 import java.util.{Locale, Timer, TimerTask}
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import java.util.{Locale, Timer, TimerTask}
 
 import scala.collection.Set
 import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
@@ -214,6 +215,34 @@ private[spark] class TaskSchedulerImpl(
         }, STARVATION_TIMEOUT_MS, STARVATION_TIMEOUT_MS)
       }
       hasReceivedTask = true
+
+      // Neptune: Pause accordingly => POC only: use the first task
+      if (sc.conf.isNeptuneCoroutinesEnabled() && !executorIdToRunningTaskIds.isEmpty &&
+        manager.neptunePriority == 1) {
+        val firstExec = executorIdToRunningTaskIds.head._1
+        // TODO: check free cores before pausing and take into account the task number
+        var releasedCores = 0
+        do {
+          releasedCores = 0
+          executorIdToRunningTaskIds.get(firstExec).foreach {
+            tasksIds =>
+              tasksIds.foreach {
+                tid =>
+                  if (!executorIdToPausedTaskIds(firstExec).contains(tid) &&
+                    taskIdToTaskSetManager(tid).neptunePriority > manager.neptunePriority) {
+                    sc.conf.getNeptuneTaskPolicy() match {
+                      case TaskState.PAUSED =>
+                        if (pauseTaskAttempt(tid, false)) releasedCores += 1
+                      case TaskState.KILLED =>
+                        if (killTaskAttempt(tid, false, "")) releasedCores += 1
+                    }
+                  }
+              }
+          }
+        } while (releasedCores < tasks.length)
+        // Avoid Triggering another offer - now done in LocalSchedulerBackend PauseEvent
+        return
+      }
     }
     backend.reviveOffers()
   }
@@ -258,40 +287,36 @@ private[spark] class TaskSchedulerImpl(
   }
 
   override def pauseTaskAttempt(taskId: Long, interruptThread: Boolean): Boolean = {
-    logInfo(s"Pausing task: $taskId")
+    logInfo(s"Pausing task $taskId")
     val execIdOpt = taskIdToExecutorId.get(taskId)
     if (execIdOpt.isDefined) {
       val execId = execIdOpt.get
       if (executorIdToRunningTaskIds.contains(execId)) {
         executorIdToPausedTaskIds(execId).add(taskId)
-        executorIdToRunningTaskIds(execId).remove(taskId)
         backend.pauseTask(taskId, execId, interruptThread)
         return true
       }
       logWarning(s"Could not pause non-running task: $taskId")
-      false
     } else {
       logWarning(s"Could not pause non-existing task: $taskId")
-      false
     }
+    false
   }
 
   override def resumeTaskAttempt(taskId: Long): Boolean = {
-    logInfo(s"Resuming task: ${taskId}")
+    logInfo(s"Resuming task ${taskId}")
     val execIdOpt = taskIdToExecutorId.get(taskId)
     if (execIdOpt.isDefined) {
       val execId = execIdOpt.get
       if (executorIdToPausedTaskIds.contains(execId)) {
-        executorIdToRunningTaskIds(execId).add(taskId)
         executorIdToPausedTaskIds(execId).remove(taskId)
         backend.resumeTask(taskId, execId)
         return true
       }
-      false
     } else {
       logWarning(s"Could not resume task ${taskId} as it was not found!")
-      false
     }
+    false
   }
 
   /**
@@ -317,6 +342,21 @@ private[spark] class TaskSchedulerImpl(
       shuffledOffers: Seq[WorkerOffer],
       availableCpus: Array[Int],
       tasks: IndexedSeq[ArrayBuffer[TaskDescription]]) : Boolean = {
+
+    // Neptune: Take care of paused tasks first
+    if (sc.conf.isNeptuneCoroutinesEnabled()) {
+      val availableExecIds = shuffledOffers.map(o => o.executorId).toArray
+      for (tid: Long <- taskSet.pausedTasksSet) {
+        val execId = taskIdToExecutorId(tid)
+        val execIndex = availableExecIds.indexOf(execId)
+        if (availableCpus(execIndex) > 0 && availableExecIds.contains(execId)) {
+          backend.resumeTask(tid, execId)
+          availableCpus(execIndex) -= CPUS_PER_TASK
+        }
+      }
+    }
+
+
     var launchedTask = false
     // nodes and executors that are blacklisted for the entire application have already been
     // filtered out by this point
@@ -391,8 +431,8 @@ private[spark] class TaskSchedulerImpl(
     val availableCpus = shuffledOffers.map(o => o.cores).toArray
     val sortedTaskSets = rootPool.getSortedTaskSetQueue
     for (taskSet <- sortedTaskSets) {
-      logDebug("parentName: %s, name: %s, runningTasks: %s".format(
-        taskSet.parent.name, taskSet.name, taskSet.runningTasks))
+      logInfo("parentName: %s, name: %s, neptunePri: %s, runningTasks: %s, pausedTasks: %s".format(
+        taskSet.parent.name, taskSet.name, taskSet.neptunePriority, taskSet.runningTasks, taskSet.pausedTasks))
       if (newExecAvail) {
         taskSet.executorAdded()
       }
@@ -452,6 +492,7 @@ private[spark] class TaskSchedulerImpl(
             if (TaskState.isFinished(state)) {
               cleanupTaskState(tid)
               taskSet.removeRunningTask(tid)
+              taskSet.removePausedTask(tid)
               if (state == TaskState.FINISHED) {
                 taskResultGetter.enqueueSuccessfulTask(taskSet, tid, serializedData)
               } else if (Set(TaskState.FAILED, TaskState.KILLED, TaskState.LOST).contains(state)) {
@@ -744,7 +785,7 @@ private[spark] object TaskSchedulerImpl {
   val SCHEDULER_MODE_PROPERTY = "spark.scheduler.mode"
 
   /**
-   * Used to balance containers across hosts.
+   * Used to balance (spread) containers across hosts.
    *
    * Accepts a map of hosts to resource offers for that host, and returns a prioritized list of
    * resource offers representing the order in which the offers should be used. The resource

@@ -150,21 +150,38 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
   }
 
   test("MultiJob Scheduler with custom Neptune priorities") {
-    val taskScheduler = setupScheduler()
+    // Schedule based on neptune_pri property
+    val taskScheduler = setupScheduler("spark.scheduler.mode" -> SchedulingMode.NEPTUNE.toString)
     val numFreeCores = 1
 
     val lowPriority: Properties = new Properties()
-    lowPriority.setProperty("neptune_pri", "10")
+    lowPriority.setProperty("neptune_pri", "2")
     val taskSetLowPri = FakeTask.createTaskSet(numTasks = 1, stageId = 0, stageAttemptId = 0, props = lowPriority)
 
     val highPriority: Properties = new Properties()
-    highPriority.setProperty("neptune_pri", "20")
+    highPriority.setProperty("neptune_pri", "1")
     val taskSetHighPri = FakeTask.createTaskSet(numTasks = 1, stageId = 1, stageAttemptId = 0, props = highPriority)
 
     taskScheduler.submitTasks(taskSetLowPri)
+
+    val singleCoreWorkerOffer = IndexedSeq(new WorkerOffer("executor0", "host0", numFreeCores))
+    var taskDescriptions = taskScheduler.resourceOffers(singleCoreWorkerOffer).flatten
+    taskDescriptions.foreach { task => logInfo(s"Scheduled ${task.name} on ${task.executorId}") }
+
+    // No Neptune priotity case
+    assert(1 === taskDescriptions.length)
+    assert("executor0" === taskDescriptions(0).executorId)
+    assert(0 === taskDescriptions(0).taskId)
+
     taskScheduler.submitTasks(taskSetHighPri)
 
-//    taskScheduler.resourceOffers()
+    // Neptune priority case
+    taskDescriptions = taskScheduler.resourceOffers(singleCoreWorkerOffer).flatten
+    taskDescriptions.foreach { task => logInfo(s"Scheduled ${task.name} on ${task.executorId}") }
+    assert(1 === taskDescriptions.length)
+    assert("executor0" === taskDescriptions(0).executorId)
+    assert(1 === taskDescriptions(0).taskId)
+
   }
 
   test("Scheduler correctly accounts for multiple CPUs per task") {
