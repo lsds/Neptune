@@ -776,6 +776,7 @@ private[spark] class TaskSetManager(
   def handlePausedTask(tid: Long): Unit = {
     val info = taskInfos(tid)
     val index = info.index
+    info.markPaused(TaskState.PAUSED, clock.getTimeMillis())
     addPausedTask(tid)
     removeRunningTask(tid)
     sched.dagScheduler.taskPaused(tasks(index), info)

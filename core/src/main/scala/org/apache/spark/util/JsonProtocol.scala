@@ -70,6 +70,8 @@ private[spark] object JsonProtocol {
         stageCompletedToJson(stageCompleted)
       case taskStart: SparkListenerTaskStart =>
         taskStartToJson(taskStart)
+      case taskPause: SparkListenerTaskPaused =>
+        taskPauseToJson(taskPause)
       case taskGettingResult: SparkListenerTaskGettingResult =>
         taskGettingResultToJson(taskGettingResult)
       case taskEnd: SparkListenerTaskEnd =>
@@ -123,6 +125,14 @@ private[spark] object JsonProtocol {
     ("Event" -> SPARK_LISTENER_EVENT_FORMATTED_CLASS_NAMES.taskStart) ~
     ("Stage ID" -> taskStart.stageId) ~
     ("Stage Attempt ID" -> taskStart.stageAttemptId) ~
+    ("Task Info" -> taskInfoToJson(taskInfo))
+  }
+
+  def taskPauseToJson(taskPause: SparkListenerTaskPaused): JValue = {
+    val taskInfo = taskPause.taskInfo
+    ("Event" -> SPARK_LISTENER_EVENT_FORMATTED_CLASS_NAMES.taskPause) ~
+    ("Stage ID" -> taskPause.stageId) ~
+    ("Stage Attempt ID" -> taskPause.stageAttemptId) ~
     ("Task Info" -> taskInfoToJson(taskInfo))
   }
 
@@ -285,6 +295,7 @@ private[spark] object JsonProtocol {
     ("Locality" -> taskInfo.taskLocality.toString) ~
     ("Speculative" -> taskInfo.speculative) ~
     ("Getting Result Time" -> taskInfo.gettingResultTime) ~
+    ("Pause Time" -> taskInfo.pauseTime) ~
     ("Finish Time" -> taskInfo.finishTime) ~
     ("Failed" -> taskInfo.failed) ~
     ("Killed" -> taskInfo.killed) ~
@@ -515,6 +526,7 @@ private[spark] object JsonProtocol {
     val stageSubmitted = Utils.getFormattedClassName(SparkListenerStageSubmitted)
     val stageCompleted = Utils.getFormattedClassName(SparkListenerStageCompleted)
     val taskStart = Utils.getFormattedClassName(SparkListenerTaskStart)
+    val taskPause = Utils.getFormattedClassName(SparkListenerTaskPaused)
     val taskGettingResult = Utils.getFormattedClassName(SparkListenerTaskGettingResult)
     val taskEnd = Utils.getFormattedClassName(SparkListenerTaskEnd)
     val jobStart = Utils.getFormattedClassName(SparkListenerJobStart)
@@ -743,6 +755,7 @@ private[spark] object JsonProtocol {
     val speculative = Utils.jsonOption(json \ "Speculative").exists(_.extract[Boolean])
     val gettingResultTime = (json \ "Getting Result Time").extract[Long]
     val finishTime = (json \ "Finish Time").extract[Long]
+    val pauseTime = (json \ "Pause Time").extract[Long]
     val failed = (json \ "Failed").extract[Boolean]
     val killed = Utils.jsonOption(json \ "Killed").exists(_.extract[Boolean])
     val accumulables = Utils.jsonOption(json \ "Accumulables").map(_.extract[Seq[JValue]]) match {
@@ -754,6 +767,7 @@ private[spark] object JsonProtocol {
       new TaskInfo(taskId, index, attempt, launchTime, executorId, host, taskLocality, speculative)
     taskInfo.gettingResultTime = gettingResultTime
     taskInfo.finishTime = finishTime
+    taskInfo.pauseTime = pauseTime
     taskInfo.failed = failed
     taskInfo.killed = killed
     taskInfo.setAccumulables(accumulables)

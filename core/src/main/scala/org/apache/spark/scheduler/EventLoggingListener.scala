@@ -159,6 +159,8 @@ private[spark] class EventLoggingListener(
 
   override def onTaskStart(event: SparkListenerTaskStart): Unit = logEvent(event)
 
+  override def onTaskPaused(event: SparkListenerTaskPaused): Unit = logEvent(event)
+
   override def onTaskGettingResult(event: SparkListenerTaskGettingResult): Unit = logEvent(event)
 
   override def onTaskEnd(event: SparkListenerTaskEnd): Unit = logEvent(event)

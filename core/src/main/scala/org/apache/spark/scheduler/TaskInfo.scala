@@ -66,9 +66,13 @@ class TaskInfo(
    */
   var finishTime: Long = 0
 
+  var pauseTime: Long = 0
+
   var failed = false
 
   var killed = false
+
+  var paused = false
 
   private[spark] def markGettingResult(time: Long) {
     gettingResultTime = time
@@ -82,6 +86,15 @@ class TaskInfo(
       failed = true
     } else if (state == TaskState.KILLED) {
       killed = true
+    }
+  }
+
+  private[spark] def markPaused(state: TaskState, time: Long) {
+    // pauseTime should be set larger than 0, otherwise "paused" below will return false.
+    assert(time > 0)
+    pauseTime = time
+    if (state == TaskState.PAUSED) {
+      paused = true
     }
   }
 
@@ -104,6 +117,8 @@ class TaskInfo(
       "FAILED"
     } else if (killed) {
       "KILLED"
+    } else if (paused) {
+      "PAUSED"
     } else if (successful) {
       "SUCCESS"
     } else {
