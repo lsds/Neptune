@@ -200,7 +200,7 @@ abstract class TaskContext extends Serializable {
 
   /**
    * ::Neptune::
-   * Checkpoint Task (whatever that means) and pause
+   * Cooperative Task context API
    */
   private[spark] def isPausable(): Boolean
   private[spark] def markPaused(toPause: Boolean): Unit

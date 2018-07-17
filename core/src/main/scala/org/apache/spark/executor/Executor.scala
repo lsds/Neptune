@@ -208,6 +208,12 @@ private[spark] class Executor(
 
   var pauseStart: Long = 0L
 
+  /**
+   * ::Neptune:: Pause a Cooperative Task
+   * @param taskId
+   * @param interruptThread
+   * @return
+   */
   def pauseTask(taskId: Long, interruptThread: Boolean): Boolean = {
     val taskRunner: TaskRunner = runningTasks.get(taskId)
     if (taskRunner != null) {
@@ -224,6 +230,11 @@ private[spark] class Executor(
     return false
   }
 
+  /**
+   * ::Neptune:: Resume a Cooperative Task
+   * @param taskId
+   * @return
+   */
   def resumeTask(taskId: Long): Boolean = {
     logInfo(s"Trying to Resume Task ${taskId}")
     val tr: TaskRunner = pausedTasks.remove(taskId)
@@ -415,7 +426,7 @@ private[spark] class Executor(
         val value = try {
           if (task.isPausable) {
             logInfo(s"Running Pausable Task (TID $taskId)")
-              task.run(
+            task.run(
                 taskAttemptId = taskId,
                 attemptNumber = taskDescription.attemptNumber,
                 metricsSystem = env.metricsSystem)

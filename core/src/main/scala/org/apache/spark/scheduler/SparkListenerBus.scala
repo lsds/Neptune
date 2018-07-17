@@ -41,6 +41,8 @@ private[spark] trait SparkListenerBus
         listener.onTaskStart(taskStart)
       case taskPaused: SparkListenerTaskPaused =>
         listener.onTaskPaused(taskPaused)
+      case taskResumed: SparkListenerTaskResumed =>
+        listener.onTaskResumed(taskResumed)
       case taskGettingResult: SparkListenerTaskGettingResult =>
         listener.onTaskGettingResult(taskGettingResult)
       case taskEnd: SparkListenerTaskEnd =>

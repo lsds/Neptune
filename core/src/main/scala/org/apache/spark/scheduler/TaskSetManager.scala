@@ -771,7 +771,7 @@ private[spark] class TaskSetManager(
   }
 
   /**
-   * Notifies the DAGScheduler that the task has been paused.
+   * ::Neptune:: Notifies the DAGScheduler that the task has been paused.
    */
   def handlePausedTask(tid: Long): Unit = {
     val info = taskInfos(tid)
@@ -780,6 +780,20 @@ private[spark] class TaskSetManager(
     addPausedTask(tid)
     removeRunningTask(tid)
     sched.dagScheduler.taskPaused(tasks(index), info)
+  }
+
+  /**
+   * ::Neptune:: Notifies the DAGScheduler that the task has been resumed.
+   */
+  def handleResumedTask(tid: Long): Unit = {
+    val info = taskInfos(tid)
+    val index = info.index
+    // Reuse pauseTime field to store resume clock time
+    info.markPaused(TaskState.RUNNING, clock.getTimeMillis())
+    addRunningTask(tid)
+    removePausedTask(tid)
+    // Add to runningSet is done in the resourceOffer method
+    sched.dagScheduler.taskResumed(tasks(index), info)
   }
 
   /**

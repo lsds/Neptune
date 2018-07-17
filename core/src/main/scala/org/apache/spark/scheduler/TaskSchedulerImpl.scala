@@ -351,6 +351,7 @@ private[spark] class TaskSchedulerImpl(
         val execIndex = availableExecIds.indexOf(execId)
         if (availableCpus(execIndex) > 0 && availableExecIds.contains(execId)) {
           backend.resumeTask(tid, execId)
+          taskSet.handleResumedTask(tid)
           availableCpus(execIndex) -= CPUS_PER_TASK
         }
       }
@@ -492,7 +493,6 @@ private[spark] class TaskSchedulerImpl(
             if (TaskState.isFinished(state)) {
               cleanupTaskState(tid)
               taskSet.removeRunningTask(tid)
-              taskSet.removePausedTask(tid)
               if (state == TaskState.FINISHED) {
                 taskResultGetter.enqueueSuccessfulTask(taskSet, tid, serializedData)
               } else if (Set(TaskState.FAILED, TaskState.KILLED, TaskState.LOST).contains(state)) {

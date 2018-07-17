@@ -54,6 +54,10 @@ case class SparkListenerTaskPaused(stageId: Int, stageAttemptId: Int, taskInfo: 
   extends SparkListenerEvent
 
 @DeveloperApi
+case class SparkListenerTaskResumed(stageId: Int, stageAttemptId: Int, taskInfo: TaskInfo)
+  extends SparkListenerEvent
+
+@DeveloperApi
 case class SparkListenerTaskGettingResult(taskInfo: TaskInfo) extends SparkListenerEvent
 
 @DeveloperApi
@@ -200,6 +204,11 @@ private[spark] trait SparkListenerInterface {
   def onTaskPaused(taskPaused: SparkListenerTaskPaused): Unit
 
   /**
+   * Called when a task is resumed
+   */
+  def onTaskResumed(taskResumed: SparkListenerTaskResumed): Unit
+
+  /**
    * Called when a task begins remotely fetching its result (will not be called for tasks that do
    * not need to fetch the result remotely).
    */
@@ -318,6 +327,8 @@ abstract class SparkListener extends SparkListenerInterface {
   override def onTaskStart(taskStart: SparkListenerTaskStart): Unit = { }
 
   override def onTaskPaused(taskPaused: SparkListenerTaskPaused): Unit = {}
+
+  override def onTaskResumed(taskResumed: SparkListenerTaskResumed): Unit = {}
 
   override def onTaskGettingResult(taskGettingResult: SparkListenerTaskGettingResult): Unit = { }
 

@@ -72,6 +72,8 @@ private[spark] object JsonProtocol {
         taskStartToJson(taskStart)
       case taskPause: SparkListenerTaskPaused =>
         taskPauseToJson(taskPause)
+      case taskResume: SparkListenerTaskResumed =>
+        taskResumeToJson(taskResume)
       case taskGettingResult: SparkListenerTaskGettingResult =>
         taskGettingResultToJson(taskGettingResult)
       case taskEnd: SparkListenerTaskEnd =>
@@ -133,6 +135,14 @@ private[spark] object JsonProtocol {
     ("Event" -> SPARK_LISTENER_EVENT_FORMATTED_CLASS_NAMES.taskPause) ~
     ("Stage ID" -> taskPause.stageId) ~
     ("Stage Attempt ID" -> taskPause.stageAttemptId) ~
+    ("Task Info" -> taskInfoToJson(taskInfo))
+  }
+
+  def taskResumeToJson(taskResume: SparkListenerTaskResumed): JValue = {
+    val taskInfo = taskResume.taskInfo
+    ("Event" -> SPARK_LISTENER_EVENT_FORMATTED_CLASS_NAMES.taskResume) ~
+    ("Stage ID" -> taskResume.stageId) ~
+    ("Stage Attempt ID" -> taskResume.stageAttemptId) ~
     ("Task Info" -> taskInfoToJson(taskInfo))
   }
 
@@ -527,6 +537,7 @@ private[spark] object JsonProtocol {
     val stageCompleted = Utils.getFormattedClassName(SparkListenerStageCompleted)
     val taskStart = Utils.getFormattedClassName(SparkListenerTaskStart)
     val taskPause = Utils.getFormattedClassName(SparkListenerTaskPaused)
+    val taskResume = Utils.getFormattedClassName(SparkListenerTaskResumed)
     val taskGettingResult = Utils.getFormattedClassName(SparkListenerTaskGettingResult)
     val taskEnd = Utils.getFormattedClassName(SparkListenerTaskEnd)
     val jobStart = Utils.getFormattedClassName(SparkListenerJobStart)
