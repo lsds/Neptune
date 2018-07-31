@@ -20,87 +20,24 @@ package org.apache.spark.scheduler
 import java.util.Properties
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
 
-import scala.annotation.meta.param
-import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet, Map}
-import scala.language.reflectiveCalls
-import scala.util.control.NonFatal
-
-import org.scalatest.concurrent.{Signaler, ThreadSignaler, TimeLimits}
-import org.scalatest.time.SpanSugar._
-
 import org.apache.spark._
 import org.apache.spark.broadcast.BroadcastManager
 import org.apache.spark.rdd.RDD
 import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
 import org.apache.spark.shuffle.{FetchFailedException, MetadataFetchFailedException}
 import org.apache.spark.storage.{BlockId, BlockManagerId, BlockManagerMaster}
-import org.apache.spark.util.{AccumulatorContext, AccumulatorV2, CallSite, LongAccumulator, Utils}
+import org.apache.spark.util._
+import org.coroutines.{coroutine, yieldval, ~>}
+import org.scalatest.concurrent.{Signaler, ThreadSignaler, TimeLimits}
+import org.scalatest.time.SpanSugar._
 
-class DAGSchedulerEventProcessLoopTester(dagScheduler: DAGScheduler)
-  extends DAGSchedulerEventProcessLoop(dagScheduler) {
+import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet, Map}
+import scala.language.reflectiveCalls
 
-  override def post(event: DAGSchedulerEvent): Unit = {
-    try {
-      // Forward event to `onReceive` directly to avoid processing event asynchronously.
-      onReceive(event)
-    } catch {
-      case NonFatal(e) => onError(e)
-    }
-  }
 
-  override def onError(e: Throwable): Unit = {
-    logError("Error in DAGSchedulerEventLoop: ", e)
-    dagScheduler.stop()
-    throw e
-  }
+class DAGCoSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLimits {
 
-}
-
-/**
- * An RDD for passing to DAGScheduler. These RDDs will use the dependencies and
- * preferredLocations (if any) that are passed to them. They are deliberately not executable
- * so we can test that DAGScheduler does not try to execute RDDs locally.
- *
- * Optionally, one can pass in a list of locations to use as preferred locations for each task,
- * and a MapOutputTrackerMaster to enable reduce task locality. We pass the tracker separately
- * because, in this test suite, it won't be the same as sc.env.mapOutputTracker.
- */
-class MyRDD(
-    sc: SparkContext,
-    numPartitions: Int,
-    dependencies: List[Dependency[_]],
-    locations: Seq[Seq[String]] = Nil,
-    @(transient @param) tracker: MapOutputTrackerMaster = null)
-  extends RDD[(Int, Int)](sc, dependencies) with Serializable {
-
-  override def compute(split: Partition, context: TaskContext): Iterator[(Int, Int)] =
-    throw new RuntimeException("should not be reached")
-
-  override def getPartitions: Array[Partition] = (0 until numPartitions).map(i => new Partition {
-    override def index: Int = i
-  }).toArray
-
-  override def getPreferredLocations(partition: Partition): Seq[String] = {
-    if (locations.isDefinedAt(partition.index)) {
-      locations(partition.index)
-    } else if (tracker != null && dependencies.size == 1 &&
-        dependencies(0).isInstanceOf[ShuffleDependency[_, _, _]]) {
-      // If we have only one shuffle dependency, use the same code path as ShuffledRDD for locality
-      val dep = dependencies(0).asInstanceOf[ShuffleDependency[_, _, _]]
-      tracker.getPreferredLocationsForShuffle(dep, partition.index)
-    } else {
-      Nil
-    }
-  }
-
-  override def toString: String = "DAGSchedulerSuiteRDD " + id
-}
-
-class DAGSchedulerSuiteDummyException extends Exception
-
-class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLimits {
-
-  import DAGSchedulerSuite._
+  import DAGCoSchedulerSuite._
 
   // Necessary to make ScalaTest 3.x interrupt a thread on the JVM like ScalaTest 2.2.x
   implicit val defaultSignaler: Signaler = ThreadSignaler
@@ -112,8 +49,11 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
   /** Stages for which the DAGScheduler has called TaskScheduler.cancelTasks(). */
   val cancelledStages = new HashSet[Int]()
 
+  /** Neptune extras */
+  val pausedTasks = new HashSet[Long]()
+
   val taskScheduler = new TaskScheduler() {
-    override def schedulingMode: SchedulingMode = SchedulingMode.FIFO
+    override def schedulingMode: SchedulingMode = SchedulingMode.NEPTUNE
     override def rootPool: Pool = new Pool("", schedulingMode, 0, 0)
     override def start() = {}
     override def stop() = {}
@@ -131,8 +71,14 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
     }
     override def killTaskAttempt(
       taskId: Long, interruptThread: Boolean, reason: String): Boolean = false
-    override def pauseTaskAttempt(taskId: Long, interruptThread: Boolean): Boolean = false
-    override def resumeTaskAttempt(taskId: Long): Boolean = false
+    override def pauseTaskAttempt(taskId: Long, interruptThread: Boolean): Boolean = {
+      pausedTasks += taskId
+      true
+    }
+    override def resumeTaskAttempt(taskId: Long): Boolean = {
+      pausedTasks -= taskId
+      true
+    }
     override def setDAGScheduler(dagScheduler: DAGScheduler) = {}
     override def defaultParallelism() = 2
     override def executorLost(executorId: String, reason: ExecutorLossReason): Unit = {}
@@ -211,11 +157,13 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
 
   override def beforeEach(): Unit = {
     super.beforeEach()
-    init(new SparkConf())
+    val neptuneConf = new SparkConf()
+    neptuneConf.enableNeptuneCoroutines()
+    init(neptuneConf)
   }
 
-  private def init(testConf: SparkConf): Unit = {
-    sc = new SparkContext("local", "DAGSchedulerSuite", testConf)
+  private def init(testCoConf: SparkConf): Unit = {
+    sc = new SparkContext("local", "DAGCoSchedulerSuite", testCoConf)
     sparkListener.submittedStageInfos.clear()
     sparkListener.successfulStages.clear()
     sparkListener.failedStages.clear()
@@ -1777,6 +1725,39 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
   }
 
   /**
+   * Neptune DAG coroutine job runner
+   */
+  test("test run CoroutineJob") {
+    // Number of parallelized partitions implies number of tasks of job
+    val rdd = sc.parallelize(1 to 10, 2)
+    val results = new Array[Int](rdd.partitions.size)
+    val iteratorSizeCoFunc: (TaskContext, Iterator[Int]) ~> (Int, Int) =
+      coroutine { (context: TaskContext, itr: Iterator[Int]) => {
+        var count = 0
+        while (itr.hasNext) {
+          if (context.isPaused()) {
+            yieldval(0)
+          }
+          count += 1
+          itr.next()
+        }
+        count
+      }
+      }
+    sc.runCoroutineJob[Int, Int](
+      rdd,
+      iteratorSizeCoFunc,
+      0 until rdd.partitions.length,
+      (index: Int, result: Int) => results(index) = result)
+
+      //scalastyle:off
+      println(results.mkString(", "))
+      results.foreach(x => assert(x == 5))
+      // Make sure we can still run commands on our SparkContext
+      assert(sc.parallelize(1 to 10, 2).count() === 10)
+  }
+
+  /**
    * The job will be failed on first task throwing a DAGSchedulerSuiteDummyException.
    *  Any subsequent task WILL throw a legitimate java.lang.UnsupportedOperationException.
    *  If multiple tasks, there exists a race condition between the SparkDriverExecutionExceptions
@@ -1786,9 +1767,22 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
     val e = intercept[SparkDriverExecutionException] {
       // Number of parallelized partitions implies number of tasks of job
       val rdd = sc.parallelize(1 to 10, 2)
-      sc.runJob[Int, Int](
+      val iteratorSizeCoFunc: (TaskContext, Iterator[Int]) ~> (Int, Int) =
+        coroutine { (context: TaskContext, itr: Iterator[Int]) => {
+          var count = 0
+          while (itr.hasNext) {
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+            count += 1
+            itr.next()
+          }
+          count
+        }
+        }
+      sc.runCoroutineJob[Int, Int](
         rdd,
-        (context: TaskContext, iter: Iterator[Int]) => iter.size,
+        iteratorSizeCoFunc,
         // For a robust test assertion, limit number of job tasks to 1; that is,
         // if multiple RDD partitions, use id of any one partition, say, first partition id=0
         Seq(0),
@@ -2430,6 +2424,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
     assert(scheduler.shuffleIdToMapStage.isEmpty)
     assert(scheduler.waitingStages.isEmpty)
     assert(scheduler.outputCommitCoordinator.isEmpty)
+    assert(pausedTasks.isEmpty)
   }
 
   // Nothing in this test should break if the task info's fields are null, but
@@ -2461,7 +2456,7 @@ class DAGSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLi
   }
 }
 
-object DAGSchedulerSuite {
+object DAGCoSchedulerSuite {
   def makeMapStatus(host: String, reduces: Int, sizes: Byte = 2): MapStatus =
     MapStatus(makeBlockManagerId(host), Array.fill[Long](reduces)(sizes))
 
