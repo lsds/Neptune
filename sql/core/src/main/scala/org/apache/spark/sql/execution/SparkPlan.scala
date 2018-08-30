@@ -25,7 +25,7 @@ import scala.concurrent.ExecutionContext
 import org.codehaus.commons.compiler.CompileException
 import org.codehaus.janino.InternalCompilerException
 
-import org.apache.spark.{broadcast, SparkEnv}
+import org.apache.spark.{SparkEnv, TaskContext, broadcast}
 import org.apache.spark.internal.Logging
 import org.apache.spark.io.CompressionCodec
 import org.apache.spark.rdd.{RDD, RDDOperationScope}
@@ -38,6 +38,7 @@ import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.types.DataType
 import org.apache.spark.util.ThreadUtils
+import org.coroutines.{coroutine, yieldval, ~>}
 
 /**
  * The base class for physical operators.
@@ -360,8 +361,20 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
 
       val p = partsScanned.until(math.min(partsScanned + numPartsToTry, totalParts).toInt)
       val sc = sqlContext.sparkContext
-      val res = sc.runJob(childRDD,
-        (it: Iterator[Array[Byte]]) => if (it.hasNext) it.next() else Array.empty[Byte], p)
+      // TODO: PANOS change to coroutines
+      val res = if (!sc.getConf.isNeptuneCoroutinesEnabled()) {
+        sc.runJob(childRDD,
+          (it: Iterator[Array[Byte]]) => if (it.hasNext) it.next() else Array.empty[Byte], p)
+      } else {
+        val takeFunc: (TaskContext, Iterator[Array[Byte]]) ~> (Int, Array[Byte]) =
+          coroutine { (context: TaskContext, itr: Iterator[Array[Byte]]) => {
+            if (context.isPaused()) yieldval(0)
+            if (itr.hasNext) itr.next()
+            else Array.empty[Byte]
+          }
+          }
+        sc.runJob(childRDD, takeFunc, p)
+      }
 
       buf ++= res.flatMap(decodeUnsafeRows)
 

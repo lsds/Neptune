@@ -34,14 +34,15 @@ import org.apache.spark.internal.io.FileCommitProtocol.TaskCommitMessage
 import org.apache.spark.shuffle.FetchFailedException
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.catalog.{BucketSpec, ExternalCatalogUtils}
 import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
+import org.apache.spark.sql.catalyst.catalog.{BucketSpec, ExternalCatalogUtils}
 import org.apache.spark.sql.catalyst.expressions.{UnsafeProjection, _}
 import org.apache.spark.sql.catalyst.plans.physical.HashPartitioning
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, DateTimeUtils}
-import org.apache.spark.sql.execution.{SortExec, SparkPlan, SQLExecution}
+import org.apache.spark.sql.execution.{SQLExecution, SortExec, SparkPlan}
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.util.{SerializableConfiguration, Utils}
+import org.coroutines.{coroutine, yieldval, ~>}
 
 
 /** A helper object for writing FileFormat data out to a location. */
@@ -191,22 +192,174 @@ object FileFormatWriter extends Logging {
           child = plan).execute()
       }
       val ret = new Array[WriteTaskResult](rdd.partitions.length)
-      sparkSession.sparkContext.runJob(
-        rdd,
-        (taskContext: TaskContext, iter: Iterator[InternalRow]) => {
-          executeTask(
-            description = description,
-            sparkStageId = taskContext.stageId(),
-            sparkPartitionId = taskContext.partitionId(),
-            sparkAttemptNumber = taskContext.attemptNumber(),
-            committer,
-            iterator = iter)
-        },
-        0 until rdd.partitions.length,
-        (index, res: WriteTaskResult) => {
-          committer.onTaskCommit(res.commitMsg)
-          ret(index) = res
-        })
+      if (!sparkSession.sparkContext.getConf.isNeptuneCoroutinesEnabled()) {
+        sparkSession.sparkContext.runJob(
+          rdd,
+          (taskContext: TaskContext, iter: Iterator[InternalRow]) => {
+            executeTask(
+              description = description,
+              sparkStageId = taskContext.stageId(),
+              sparkPartitionId = taskContext.partitionId(),
+              sparkAttemptNumber = taskContext.attemptNumber(),
+              committer,
+              iterator = iter)
+          },
+          0 until rdd.partitions.length,
+          (index, res: WriteTaskResult) => {
+            committer.onTaskCommit(res.commitMsg)
+            ret(index) = res
+          })
+      } else {
+        val executorTaskCoFunc: (TaskContext, Iterator[InternalRow]) ~> (Int, WriteTaskResult) =
+          coroutine { (context: TaskContext, iterator: Iterator[InternalRow]) => {
+
+            val jobId = SparkHadoopWriterUtils.createJobID(new Date, context.stageId())
+            val taskId = new TaskID(jobId, TaskType.MAP, context.partitionId())
+            val taskAttemptId = new TaskAttemptID(taskId, context.attemptNumber())
+
+            // Set up the attempt context required to use in the output committer.
+            val taskAttemptContext: TaskAttemptContext = {
+              // Set up the configuration object
+              val hadoopConf = description.serializableHadoopConf.value
+              hadoopConf.set("mapreduce.job.id", jobId.toString)
+              hadoopConf.set("mapreduce.task.id", taskAttemptId.getTaskID.toString)
+              hadoopConf.set("mapreduce.task.attempt.id", taskAttemptId.toString)
+              hadoopConf.setBoolean("mapreduce.task.ismap", true)
+              hadoopConf.setInt("mapreduce.task.partition", 0)
+
+              new TaskAttemptContextImpl(hadoopConf, taskAttemptId)
+            }
+
+            committer.setupTask(taskAttemptContext)
+            // Jungle entry: Here
+            var retVal: WriteTaskResult = null
+            var currentWriter: OutputWriter = null
+            val statsTrackers: Seq[WriteTaskStatsTracker] =
+              description.statsTrackers.map(_.newTaskInstance())
+
+            val releaseResources = () => {
+              if (context.partitionId() != 0 && !iterator.hasNext) {
+                // In case of empty job, leave first partition to save meta for file format like parquet.
+                log.info("PAN Empty release")
+              } else if (description.partitionColumns.isEmpty && description.bucketIdExpression.isEmpty) {
+                log.info("PAN Single release")
+                if (currentWriter != null) {
+                  try {
+                    currentWriter.close()
+                  } finally {
+                    currentWriter = null
+                  }
+                }
+              }
+            }
+
+            val execute: (Iterator[InternalRow]) => ExecutedWriteSummary = iter => {
+              if (context.partitionId() != 0 && !iterator.hasNext) {
+                // In case of empty job, leave first partition to save meta for file format like parquet.
+                log.info("PAN Empty execute")
+              } else if (description.partitionColumns.isEmpty && description.bucketIdExpression.isEmpty) {
+                log.info("PAN Single execute")
+                def newOutputWriter(fileCounter: Int): Unit = {
+                  val ext = description.outputWriterFactory.getFileExtension(taskAttemptContext)
+                  val currentPath = committer.newTaskTempFile(
+                    taskAttemptContext,
+                    None,
+                    f"-c$fileCounter%03d" + ext)
+                  currentWriter = description.outputWriterFactory.newInstance(
+                    path = currentPath,
+                    dataSchema = description.dataColumns.toStructType,
+                    context = taskAttemptContext)
+                  statsTrackers.map(_.newFile(currentPath))
+                }
+                var fileCounter = 0
+                var recordsInFile: Long = 0L
+                newOutputWriter(fileCounter)
+
+                while (iter.hasNext) {
+                  if (description.maxRecordsPerFile > 0 && recordsInFile >= description.maxRecordsPerFile) {
+                    fileCounter += 1
+                    assert(fileCounter < MAX_FILE_COUNTER,
+                      s"File counter $fileCounter is beyond max value $MAX_FILE_COUNTER")
+
+                    recordsInFile = 0
+                    releaseResources()
+                    newOutputWriter(fileCounter)
+                  }
+
+                  val internalRow = iter.next()
+                  currentWriter.write(internalRow)
+                  statsTrackers.foreach(_.newRow(internalRow))
+                  recordsInFile += 1
+                }
+                releaseResources()
+              }
+              ExecutedWriteSummary(
+                updatedPartitions = Set.empty,
+                stats = statsTrackers.map(_.getFinalStats()))
+            }
+
+            try {
+              var originalThrowable: Throwable = null
+              try {
+                // Execute the task to write rows out and commit the task.
+                if (context.isPaused()) {
+                  yieldval(0)
+                }
+                val summary = execute(iterator)
+                releaseResources()
+                retVal = WriteTaskResult(committer.commitTask(taskAttemptContext), summary)
+              } catch {
+                case cause: Throwable =>
+                  // Purposefully not using NonFatal, because even fatal exceptions
+                  // we don't want to have our finallyBlock suppress
+                  originalThrowable = cause
+                  try {
+                    logError("Aborting coroutine task", originalThrowable)
+                    TaskContext.get().asInstanceOf[TaskContextImpl].markTaskFailed(originalThrowable)
+                    // If there is an error, release resource and then abort the task
+                    try {
+                      releaseResources()
+                    } finally {
+                      committer.abortTask(taskAttemptContext)
+                      logError(s"Coroutine Job $jobId aborted.")
+                    }
+                  } catch {
+                    case t: Throwable =>
+                      if (originalThrowable != t) {
+                        originalThrowable.addSuppressed(t)
+                        logWarning(s"Suppressing exception in catch: ${t.getMessage}", t)
+                      }
+                  }
+                  throw originalThrowable
+              } finally {
+                try {
+                  ()
+                } catch {
+                  case t: Throwable if (originalThrowable != null && originalThrowable != t) =>
+                    originalThrowable.addSuppressed(t)
+                    logWarning(s"Suppressing exception in finally: ${t.getMessage}", t)
+                    throw originalThrowable
+                }
+              }
+            } catch {
+              case e: FetchFailedException =>
+                throw e
+              case t: Throwable =>
+                throw new SparkException("Coroutine Task failed while writing rows.", t)
+            }
+            retVal
+           }
+          }
+
+        sparkSession.sparkContext.runCoroutineJob(
+          rdd,
+          executorTaskCoFunc,
+          0 until rdd.partitions.length,
+          (index, res: WriteTaskResult) => {
+            committer.onTaskCommit(res.commitMsg)
+            ret(index) = res
+          })
+      }
 
       val commitMsgs = ret.map(_.commitMsg)
 
@@ -578,6 +731,97 @@ object FileFormatWriter extends Logging {
       }
     }
   }
+//  val executorTaskCoFunc: (TaskContext, Iterator[InternalRow]) ~> (Int, WriteTaskResult) =
+//    coroutine { (context: TaskContext, iterator: Iterator[InternalRow]) => {
+//
+//      val jobId = SparkHadoopWriterUtils.createJobID(new Date, context.stageId())
+//      val taskId = new TaskID(jobId, TaskType.MAP, context.partitionId())
+//      val taskAttemptId = new TaskAttemptID(taskId, context.attemptNumber())
+//
+//      // Set up the attempt context required to use in the output committer.
+//      val taskAttemptContext: TaskAttemptContext = {
+//        // Set up the configuration object
+//        val hadoopConf = description.serializableHadoopConf.value
+//        hadoopConf.set("mapreduce.job.id", jobId.toString)
+//        hadoopConf.set("mapreduce.task.id", taskAttemptId.getTaskID.toString)
+//        hadoopConf.set("mapreduce.task.attempt.id", taskAttemptId.toString)
+//        hadoopConf.setBoolean("mapreduce.task.ismap", true)
+//        hadoopConf.setInt("mapreduce.task.partition", 0)
+//
+//        new TaskAttemptContextImpl(hadoopConf, taskAttemptId)
+//      }
+//
+//      committer.setupTask(taskAttemptContext)
+//      val writeTask =
+//        if (context.partitionId() != 0 && !iterator.hasNext) {
+//          // In case of empty job, leave first partition to save meta for file format like parquet.
+//          log.info("PAN Empty")
+//          new EmptyDirectoryWriteTask(description)
+//        } else if (description.partitionColumns.isEmpty && description.bucketIdExpression.isEmpty) {
+//          log.info("PAN Single")
+//          new SingleDirectoryWriteTask(description, taskAttemptContext, committer)
+//        } else {
+//          log.info("PAN Dynamics")
+//          new DynamicPartitionWriteTask(description, taskAttemptContext, committer)
+//        }
+//
+//      try {
+//        var originalThrowable: Throwable = null
+//        try {
+//          // Execute the task to write rows out and commit the task.
+//          val summary = writeTask.execute(iterator)
+//          writeTask.releaseResources()
+//          WriteTaskResult(committer.commitTask(taskAttemptContext), summary)
+//        } catch {
+//          case cause: Throwable =>
+//            // Purposefully not using NonFatal, because even fatal exceptions
+//            // we don't want to have our finallyBlock suppress
+//            originalThrowable = cause
+//            try {
+//              logError("Aborting coroutine task", originalThrowable)
+//              TaskContext.get().asInstanceOf[TaskContextImpl].markTaskFailed(originalThrowable)
+//              // If there is an error, release resource and then abort the task
+//              try {
+//                writeTask.releaseResources()
+//              } finally {
+//                committer.abortTask(taskAttemptContext)
+//                logError(s"Coroutine Job $jobId aborted.")
+//              }
+//            } catch {
+//              case t: Throwable =>
+//                if (originalThrowable != t) {
+//                  originalThrowable.addSuppressed(t)
+//                  logWarning(s"Suppressing exception in catch: ${t.getMessage}", t)
+//                }
+//            }
+//            throw originalThrowable
+//        } finally {
+//          try {
+//            ()
+//          } catch {
+//            case t: Throwable if (originalThrowable != null && originalThrowable != t) =>
+//              originalThrowable.addSuppressed(t)
+//              logWarning(s"Suppressing exception in finally: ${t.getMessage}", t)
+//              throw originalThrowable
+//          }
+//        }
+//      } catch {
+//        case e: FetchFailedException =>
+//          throw e
+//        case t: Throwable =>
+//          throw new SparkException("Coroutine Task failed while writing rows.", t)
+//      }
+//    }
+//    }
+//
+//  sparkSession.sparkContext.runCoroutineJob(
+//    rdd,
+//    executorTaskCoFunc,
+//    0 until rdd.partitions.length,
+//    (index, res: WriteTaskResult) => {
+//      committer.onTaskCommit(res.commitMsg)
+//      ret(index) = res
+//    })
 }
 
 /**
