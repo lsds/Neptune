@@ -938,10 +938,24 @@ abstract class RDD[T: ClassTag](
 
   /**
    * Applies a function f to each partition of this RDD.
+   * TODO: Neptune yielding more fine-grained?
    */
   def foreachPartition(f: Iterator[T] => Unit): Unit = withScope {
     val cleanF = sc.clean(f)
-    sc.runJob(this, (iter: Iterator[T]) => cleanF(iter))
+    if (!sc.getConf.isNeptuneCoroutinesEnabled()) {
+      sc.runJob(this, (iter: Iterator[T]) => cleanF(iter))
+    } else {
+      // coroutine implementation
+      val foreachPartitionCoFunc: (TaskContext, Iterator[T]) ~> (Int, Unit) =
+        coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          if (context.isPaused()) {
+            yieldval(0)
+          }
+          cleanF(itr)
+         }
+        }
+      sc.runJob(this, foreachPartitionCoFunc)
+    }
   }
 
   /**
