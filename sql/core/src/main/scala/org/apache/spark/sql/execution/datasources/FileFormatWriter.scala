@@ -265,7 +265,6 @@ object FileFormatWriter extends Logging {
               try {
                 // TODO: PANOS EmptyDirectoryWriteTask and DynamicPartitionWriteTask
                 // Execute the task to write rows out and commit the task.
-//                val summary = execute(iterator)
                 var fileCounter = 0
                 var recordsInFile: Long = 0L
                 newOutputWriter(fileCounter)
@@ -296,7 +295,6 @@ object FileFormatWriter extends Logging {
 
                 releaseResources()
                 ret = WriteTaskResult(committer.commitTask(taskAttemptContext), summary)
-
               } catch {
                 case cause: Throwable =>
                   // Purposefully not using NonFatal, because even fatal exceptions
