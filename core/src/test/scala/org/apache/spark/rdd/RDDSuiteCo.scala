@@ -31,7 +31,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.{ArrayBuffer, HashMap}
 import scala.reflect.ClassTag
 
-class RDDCoroutineSuite extends SparkFunSuite {
+class RDDSuiteCo extends SparkFunSuite {
   var tempDir: File = _
   var conf : SparkConf = _
   var sc : SparkContext = _

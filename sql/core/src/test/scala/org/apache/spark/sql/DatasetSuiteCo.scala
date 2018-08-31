@@ -34,7 +34,7 @@ import org.apache.spark.sql.types._
 import org.coroutines.{coroutine, yieldval, ~>}
 
 
-class DatasetCoroutineSuite extends QueryTest with SharedCoroutineSQLContext {
+class DatasetSuiteCo extends QueryTest with SharedCoroutineSQLContext {
   import testImplicits._
 
   private implicit val ordering = Ordering.by((c: ClassData) => c.a -> c.b)

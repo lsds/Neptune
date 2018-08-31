@@ -38,7 +38,7 @@ import org.scalatest.Matchers._
 
 import scala.util.Random
 
-class DataFrameCoroutineSuite extends QueryTest with SharedCoroutineSQLContext {
+class DataFrameSuiteCo extends QueryTest with SharedCoroutineSQLContext {
   import testImplicits._
 
   test("analysis error should be eagerly reported") {
