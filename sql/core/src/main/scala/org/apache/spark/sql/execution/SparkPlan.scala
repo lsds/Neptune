@@ -361,19 +361,18 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
 
       val p = partsScanned.until(math.min(partsScanned + numPartsToTry, totalParts).toInt)
       val sc = sqlContext.sparkContext
-      // TODO: PANOS change to coroutines
       val res = if (!sc.getConf.isNeptuneCoroutinesEnabled()) {
         sc.runJob(childRDD,
           (it: Iterator[Array[Byte]]) => if (it.hasNext) it.next() else Array.empty[Byte], p)
       } else {
-        val takeFunc: (TaskContext, Iterator[Array[Byte]]) ~> (Int, Array[Byte]) =
+        val takeCoFunc: (TaskContext, Iterator[Array[Byte]]) ~> (Int, Array[Byte]) =
           coroutine { (context: TaskContext, itr: Iterator[Array[Byte]]) => {
             if (context.isPaused()) yieldval(0)
             if (itr.hasNext) itr.next()
             else Array.empty[Byte]
           }
           }
-        sc.runJob(childRDD, takeFunc, p)
+        sc.runJob(childRDD, takeCoFunc, p)
       }
 
       buf ++= res.flatMap(decodeUnsafeRows)
