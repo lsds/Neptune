@@ -174,10 +174,12 @@ private[spark] object ReliableCheckpointRDD extends Logging {
 
           var originalThrowable: Throwable = null
           try {
-            if (ctx.isPaused()) {
-              yieldval(0)
+            while (iterator.hasNext) {
+              if (ctx.isPaused()) {
+                yieldval(0)
+              }
+              serializeStream.writeObject(iterator.next())
             }
-            serializeStream.writeAll(iterator)
           } catch {
             case t: Throwable =>
               // Purposefully not using NonFatal, because even fatal exceptions
