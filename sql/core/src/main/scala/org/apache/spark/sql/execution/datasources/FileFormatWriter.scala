@@ -263,7 +263,7 @@ object FileFormatWriter extends Logging {
             var ret: FileFormatWriter.WriteTaskResult = null
             try {
               try {
-                // TODO: PANOS EmptyDirectoryWriteTask and DynamicPartitionWriteTask
+                // TODO: Neptune EmptyDirectoryWriteTask and DynamicPartitionWriteTask
                 // Execute the task to write rows out and commit the task.
                 var fileCounter = 0
                 var recordsInFile: Long = 0L
