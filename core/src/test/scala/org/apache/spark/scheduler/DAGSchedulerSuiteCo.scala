@@ -35,9 +35,9 @@ import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet, Map}
 import scala.language.reflectiveCalls
 
 
-class DAGCoSchedulerSuite extends SparkFunSuite with LocalSparkContext with TimeLimits {
+class DAGSchedulerSuiteCo extends SparkFunSuite with LocalSparkContext with TimeLimits {
 
-  import DAGCoSchedulerSuite._
+  import DAGSchedulerSuiteCo._
 
   // Necessary to make ScalaTest 3.x interrupt a thread on the JVM like ScalaTest 2.2.x
   implicit val defaultSignaler: Signaler = ThreadSignaler
@@ -2456,7 +2456,7 @@ class DAGCoSchedulerSuite extends SparkFunSuite with LocalSparkContext with Time
   }
 }
 
-object DAGCoSchedulerSuite {
+object DAGSchedulerSuiteCo {
   def makeMapStatus(host: String, reduces: Int, sizes: Byte = 2): MapStatus =
     MapStatus(makeBlockManagerId(host), Array.fill[Long](reduces)(sizes))
 
