@@ -1231,7 +1231,7 @@ class DAGScheduler(
             stage.pendingPartitions += id
             new ShuffleMapTask(stage.id, stage.latestInfo.attemptNumber,
               taskBinary, part, locs, properties, serializedTaskMetrics, Option(jobId),
-              Option(sc.applicationId), sc.applicationAttemptId)
+              Option(sc.applicationId), sc.applicationAttemptId, sc.getConf.isNeptuneCoroutinesEnabled())
           }
 
         case stage: ResultStage =>

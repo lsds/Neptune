@@ -99,7 +99,7 @@ private[spark] class ExternalSorter[K, V, C](
 
   private val numPartitions = partitioner.map(_.numPartitions).getOrElse(1)
   private val shouldPartition = numPartitions > 1
-  private def getPartition(key: K): Int = {
+  def getPartition(key: K): Int = {
     if (shouldPartition) partitioner.get.getPartition(key) else 0
   }
 
@@ -123,8 +123,8 @@ private[spark] class ExternalSorter[K, V, C](
   // Data structures to store in-memory objects before we spill. Depending on whether we have an
   // Aggregator set, we either put objects into an AppendOnlyMap where we combine them, or we
   // store them in an array buffer.
-  @volatile private var map = new PartitionedAppendOnlyMap[K, C]
-  @volatile private var buffer = new PartitionedPairBuffer[K, C]
+  @volatile var map = new PartitionedAppendOnlyMap[K, C]
+  @volatile var buffer = new PartitionedPairBuffer[K, C]
 
   // Total spilling statistics
   private var _diskBytesSpilled = 0L
@@ -210,7 +210,7 @@ private[spark] class ExternalSorter[K, V, C](
    *
    * @param usingMap whether we're using a map or buffer as our current in-memory collection
    */
-  private def maybeSpillCollection(usingMap: Boolean): Unit = {
+  def maybeSpillCollection(usingMap: Boolean): Unit = {
     var estimatedSize = 0L
     if (usingMap) {
       estimatedSize = map.estimateSize()
