@@ -948,6 +948,7 @@ abstract class RDD[T: ClassTag](
       // coroutine implementation
       val foreachPartitionCoFunc: (TaskContext, Iterator[T]) ~> (Int, Unit) =
         coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          log.warn("NEPTUNE coarse-grained yield point")
           if (context.isPaused()) {
             yieldval(0)
           }

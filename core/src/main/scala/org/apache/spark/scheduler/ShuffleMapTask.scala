@@ -144,6 +144,7 @@ private[spark] class ShuffleMapTask(
           }
           val shouldCombine = depLoc.aggregator.isDefined
           if (shouldCombine) {
+            log.warn("NEPTUNE coarse-grained yield point")
             // Combine values in-memory first using our AppendOnlyMap
             val mergeValue = depLoc.aggregator.get.mergeValue
             val createCombiner = depLoc.aggregator.get.createCombiner
