@@ -47,9 +47,10 @@ private[spark] trait SchedulerBackend {
 
   /**
    * ::Neptune::
-   * Request an executor to pause a running coroutine Task
+   * Request a Remote or Local Backend executor to pause a running coroutine Task.
    *
    * @param taskId
+   * @param executorId
    * @param interruptThread
    */
   def pauseTask(
@@ -57,6 +58,13 @@ private[spark] trait SchedulerBackend {
       executorId: String,
       interruptThread: Boolean): Unit = {}
 
+  /**
+    * ::Neptune::
+    * Request a Remote or Local Backend executor to resume a paused coroutine Task.
+    *
+    * @param taskId
+    * @param executorId
+    */
   def resumeTask(
        taskId: Long,
        executorId: String): Unit = {}
