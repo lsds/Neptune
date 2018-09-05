@@ -145,6 +145,27 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
             logWarning(s"Attempted to kill task $taskId for unknown executor $executorId.")
         }
 
+      case PauseTask(taskId, executorId, interruptThread) =>
+        executorDataMap.get(executorId) match {
+          case Some(executorInfo) =>
+            executorInfo.executorEndpoint.send(PauseTask(taskId, executorId, interruptThread))
+            executorInfo.freeCores += scheduler.CPUS_PER_TASK
+            makeOffers(executorId)
+          case None =>
+            // Ignoring the task PAUSE Event since the executor is not registered.
+            logWarning(s"Attempted to pause task $taskId for unknown executor $executorId.")
+        }
+
+      case ResumeTask(taskId, executorId) =>
+        executorDataMap.get(executorId) match {
+          case Some(executorInfo) =>
+            executorInfo.executorEndpoint.send(ResumeTask(taskId, executorId))
+            executorInfo.freeCores -= scheduler.CPUS_PER_TASK
+          case None =>
+            // Ignoring the task RESUME Event since the executor is not registered.
+            logWarning(s"Attempted to resume task $taskId for unknown executor $executorId.")
+        }
+
       case KillExecutorsOnHost(host) =>
         scheduler.getExecutorsAliveOnHost(host).foreach { exec =>
           killExecutors(exec.toSeq, replace = true, force = true)
@@ -450,6 +471,16 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
   override def killTask(
       taskId: Long, executorId: String, interruptThread: Boolean, reason: String) {
     driverEndpoint.send(KillTask(taskId, executorId, interruptThread, reason))
+  }
+
+  override def pauseTask(
+     taskId: Long, executorId: String, interruptThread: Boolean): Unit = {
+    driverEndpoint.send(PauseTask(taskId, executorId, interruptThread))
+  }
+
+  override def resumeTask(
+     taskId: Long, executorId: String): Unit = {
+    driverEndpoint.send((ResumeTask(taskId, executorId)))
   }
 
   override def defaultParallelism(): Int = {

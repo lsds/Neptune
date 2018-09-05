@@ -105,6 +105,20 @@ private[spark] class CoarseGrainedExecutorBackend(
         executor.killTask(taskId, interruptThread, reason)
       }
 
+    case PauseTask(taskId, _, interruptThread) =>
+      if (executor == null) {
+        exitExecutor(1, "Received PauseTask command but executor was null")
+      } else {
+        executor.pauseTask(taskId, interruptThread)
+      }
+
+    case ResumeTask(taskId, _) =>
+      if (executor == null) {
+        exitExecutor(1, "Received ResumeTask command but executor was null")
+      } else {
+        executor.resumeTask(taskId)
+      }
+
     case StopExecutor =>
       stopping.set(true)
       logInfo("Driver commanded a shutdown")

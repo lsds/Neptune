@@ -44,6 +44,12 @@ private[spark] object CoarseGrainedClusterMessages {
   case class KillTask(taskId: Long, executor: String, interruptThread: Boolean, reason: String)
     extends CoarseGrainedClusterMessage
 
+  case class PauseTask(taskId: Long, executor: String, interruptThread: Boolean)
+    extends CoarseGrainedClusterMessage
+
+  case class ResumeTask(taskId: Long, executor: String)
+    extends CoarseGrainedClusterMessage
+
   case class KillExecutorsOnHost(host: String)
     extends CoarseGrainedClusterMessage
 
