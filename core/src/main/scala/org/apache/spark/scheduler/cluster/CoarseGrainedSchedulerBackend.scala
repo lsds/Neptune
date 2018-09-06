@@ -516,6 +516,8 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
     false
   }
 
+  override def getExecutorDataMap(): HashMap[String, ExecutorData] = executorDataMap
+
   /**
    * Return the number of executors currently registered with this backend.
    */

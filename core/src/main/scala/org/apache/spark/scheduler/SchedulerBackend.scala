@@ -17,6 +17,10 @@
 
 package org.apache.spark.scheduler
 
+import org.apache.spark.scheduler.cluster.ExecutorData
+
+import scala.collection.mutable.HashMap
+
 /**
  * A backend interface for scheduling systems that allows plugging in different ones under
  * TaskSchedulerImpl. We assume a Mesos-like model where the application gets resource offers as
@@ -92,5 +96,12 @@ private[spark] trait SchedulerBackend {
    * @return Map containing the log names and their respective URLs
    */
   def getDriverLogUrls: Option[Map[String, String]] = None
+
+  /**
+   * ::Neptune::
+   * Get a Map with all Backend details
+   * @return
+   */
+  def getExecutorDataMap(): HashMap[String, ExecutorData]
 
 }
