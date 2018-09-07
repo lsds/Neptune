@@ -19,12 +19,15 @@ package org.apache.spark.sql.kafka010
 
 import java.{util => ju}
 
+import org.apache.spark.{TaskContext, TaskContextImpl}
 import org.apache.spark.internal.Logging
+import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
 import org.apache.spark.sql.types.{BinaryType, StringType}
 import org.apache.spark.util.Utils
+import org.coroutines.{coroutine, yieldval, ~>}
 
 /**
  * The [[KafkaWriter]] class is used to write data from a batch query
@@ -84,10 +87,61 @@ private[kafka010] object KafkaWriter extends Logging {
       topic: Option[String] = None): Unit = {
     val schema = queryExecution.analyzed.output
     validateQuery(schema, kafkaParameters, topic)
-    queryExecution.toRdd.foreachPartition { iter =>
-      val writeTask = new KafkaWriteTask(kafkaParameters, schema, topic)
-      Utils.tryWithSafeFinally(block = writeTask.execute(iter))(
-        finallyBlock = writeTask.close())
+    if (!sparkSession.sqlContext.sparkContext.getConf.isNeptuneCoroutinesEnabled()) {
+      queryExecution.toRdd.foreachPartition { iter =>
+        val writeTask = new KafkaWriteTask(kafkaParameters, schema, topic)
+        Utils.tryWithSafeFinally(block = writeTask.execute(iter))(
+          finallyBlock = writeTask.close())
+      }
+    } else {
+      val writeTaskCoFunc: (TaskContext, Iterator[InternalRow]) ~> (Int, Unit) =
+        coroutine { (context: TaskContext, iterator: Iterator[InternalRow]) => {
+          val writeTask = new KafkaWriteTask(kafkaParameters, schema, topic)
+          // write the data and commit this writer.
+          var originalThrowable: Throwable = null
+          try {
+            writeTask.producer = CachedKafkaProducer.getOrCreate(writeTask.producerConfiguration)
+            while (iterator.hasNext && writeTask.failedWrite == null) {
+              if (context.isPaused()) {
+                yieldval(0)
+              }
+              val currentRow = iterator.next()
+              writeTask.sendRow(currentRow, writeTask.producer)
+            }
+            logInfo(s"Writer for partition ${context.partitionId()} is committing.")
+            logInfo(s"Writer for partition ${context.partitionId()} committed.")
+          } catch {
+            case cause: Throwable =>
+              // Purposefully not using NonFatal, because even fatal exceptions
+              // we don't want to have our finallyBlock suppress
+              originalThrowable = cause
+              try {
+                logError("Aborting task", originalThrowable)
+                TaskContext.get().asInstanceOf[TaskContextImpl].markTaskFailed(originalThrowable)
+                // If there is an error, abort this writer
+                logError(s"Writer for partition ${context.partitionId()} is aborting.")
+                logError(s"Writer for partition ${context.partitionId()} aborted.")
+              } catch {
+                case t: Throwable =>
+                  if (originalThrowable != t) {
+                    originalThrowable.addSuppressed(t)
+                    logWarning(s"Suppressing exception in catch: ${t.getMessage}", t)
+                  }
+              }
+              throw originalThrowable
+          } finally {
+            try {
+              writeTask.close()
+            } catch {
+              case t: Throwable if (originalThrowable != null && originalThrowable != t) =>
+                originalThrowable.addSuppressed(t)
+                logWarning(s"Suppressing exception in finally: ${t.getMessage}", t)
+                throw originalThrowable
+            }
+          }
+        }
+        }
+      queryExecution.toRdd.foreachPartitionCoFunc(writeTaskCoFunc)
     }
   }
 }

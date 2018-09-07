@@ -31,11 +31,11 @@ import org.apache.spark.sql.types.{BinaryType, StringType}
  * automatically trigger task aborts.
  */
 private[kafka010] class KafkaWriteTask(
-    producerConfiguration: ju.Map[String, Object],
+    val producerConfiguration: ju.Map[String, Object],
     inputSchema: Seq[Attribute],
     topic: Option[String]) extends KafkaRowWriter(inputSchema, topic) {
   // used to synchronize with Kafka callbacks
-  private var producer: KafkaProducer[Array[Byte], Array[Byte]] = _
+  private[spark] var producer: KafkaProducer[Array[Byte], Array[Byte]] = _
 
   /**
    * Writes key value data out to topics.
@@ -62,7 +62,7 @@ private[kafka010] abstract class KafkaRowWriter(
     inputSchema: Seq[Attribute], topic: Option[String]) {
 
   // used to synchronize with Kafka callbacks
-  @volatile protected var failedWrite: Exception = _
+  @volatile var failedWrite: Exception = _
   protected val projection = createProjection
 
   private val callback = new Callback() {
@@ -78,7 +78,7 @@ private[kafka010] abstract class KafkaRowWriter(
    * to failedWrite. Note that send is asynchronous; subclasses must flush() their producer before
    * assuming the row is in Kafka.
    */
-  protected def sendRow(
+  protected[spark] def sendRow(
       row: InternalRow, producer: KafkaProducer[Array[Byte], Array[Byte]]): Unit = {
     val projectedRow = projection(row)
     val topic = projectedRow.getUTF8String(0)

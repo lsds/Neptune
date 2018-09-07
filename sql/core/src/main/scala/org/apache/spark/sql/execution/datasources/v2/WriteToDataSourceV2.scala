@@ -17,7 +17,7 @@
 
 package org.apache.spark.sql.execution.datasources.v2
 
-import org.apache.spark.{SparkEnv, SparkException, TaskContext}
+import org.apache.spark.{SparkEnv, SparkException, TaskContext, TaskContextImpl}
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.Row
@@ -32,6 +32,7 @@ import org.apache.spark.sql.sources.v2.streaming.writer.ContinuousWriter
 import org.apache.spark.sql.sources.v2.writer._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
+import org.coroutines.{coroutine, yieldval, ~>}
 
 /**
  * The logical plan for writing data into data source v2.
@@ -57,7 +58,6 @@ case class WriteToDataSourceV2Exec(writer: DataSourceV2Writer, query: SparkPlan)
     val rdd = query.execute()
     val messages = new Array[WriterCommitMessage](rdd.partitions.length)
 
-    logWarning(s"Writer rdd partitions ${rdd.partitions.length} : ${rdd.getNumPartitions}")
     logInfo(s"Start processing data source writer: $writer. " +
       s"The input RDD has ${messages.length} partitions.")
 
@@ -76,12 +76,69 @@ case class WriteToDataSourceV2Exec(writer: DataSourceV2Writer, query: SparkPlan)
             DataWritingSparkTask.run(writeTask, context, iter)
       }
 
-      sparkContext.runJob(
-        rdd,
-        runTask,
-        rdd.partitions.indices,
-        (index, message: WriterCommitMessage) => messages(index) = message
-      )
+      if (!sparkContext.getConf.isNeptuneCoroutinesEnabled()) {
+        sparkContext.runJob(
+          rdd,
+          runTask,
+          rdd.partitions.indices,
+          (index, message: WriterCommitMessage) => messages(index) = message
+        )
+      } else {
+        val writeTaskCoFunc: (TaskContext, Iterator[InternalRow]) ~> (Int, WriterCommitMessage) =
+          coroutine { (context: TaskContext, iterator: Iterator[InternalRow]) => {
+            val dataWriter = writeTask.createDataWriter(context.partitionId(), context.attemptNumber())
+            // write the data and commit this writer.
+            var originalThrowable: Throwable = null
+            var commitMessage: WriterCommitMessage = null
+            try {
+              while (iterator.hasNext) {
+                if (context.isPaused()) {
+                  yieldval(0)
+                }
+                dataWriter.write(iterator.next())
+              }
+              logInfo(s"Writer for partition ${context.partitionId()} is committing.")
+              commitMessage = dataWriter.commit()
+              logInfo(s"Writer for partition ${context.partitionId()} committed.")
+              commitMessage
+            } catch {
+              case cause: Throwable =>
+                // Purposefully not using NonFatal, because even fatal exceptions
+                // we don't want to have our finallyBlock suppress
+                originalThrowable = cause
+                try {
+                  logError("Aborting task", originalThrowable)
+                  TaskContext.get().asInstanceOf[TaskContextImpl].markTaskFailed(originalThrowable)
+                  // If there is an error, abort this writer
+                  logError(s"Writer for partition ${context.partitionId()} is aborting.")
+                  dataWriter.abort()
+                  logError(s"Writer for partition ${context.partitionId()} aborted.")
+                } catch {
+                  case t: Throwable =>
+                    if (originalThrowable != t) {
+                      originalThrowable.addSuppressed(t)
+                      logWarning(s"Suppressing exception in catch: ${t.getMessage}", t)
+                    }
+                }
+                throw originalThrowable
+            } finally {
+              try {
+                ()
+              } catch {
+                case t: Throwable if (originalThrowable != null && originalThrowable != t) =>
+                  originalThrowable.addSuppressed(t)
+                  logWarning(s"Suppressing exception in finally: ${t.getMessage}", t)
+                  throw originalThrowable
+              }
+            }
+            commitMessage
+          }
+          }
+        sparkContext.runCoroutineJob(rdd,
+          writeTaskCoFunc,
+          rdd.partitions.indices,
+          (index, message: WriterCommitMessage) => messages(index) = message)
+      }
 
       if (!writer.isInstanceOf[ContinuousWriter]) {
         logInfo(s"Data source writer $writer is committing.")

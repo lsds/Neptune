@@ -959,6 +959,12 @@ abstract class RDD[T: ClassTag](
     }
   }
 
+
+  def foreachPartitionCoFunc(coFunc: (TaskContext, Iterator[T]) ~> (Int, Unit)): Unit = withScope {
+    val cleanF = sc.clean(coFunc)
+    sc.runJob(this, cleanF)
+  }
+
   /**
    * Return an array that contains all of the elements in this RDD.
    *
