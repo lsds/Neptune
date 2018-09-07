@@ -241,26 +241,30 @@ private[spark] class TaskSchedulerImpl(
         val validExecs = backend.getExecutorDataMap().filterKeys(execWithEnoughLowPriTasks).keys
         log.info(s"Neptune found ${validExecs} Executors with tasks to PAUSE")
         // Executor selection policy (random for now)
-        val firstExec = validExecs.head
-        var releasedCores = 0
-        do {
-          releasedCores = 0
-          executorIdToRunningTaskIds.get(firstExec).foreach {
-            tasksIds =>
-              tasksIds.foreach {
-                tid =>
-                  if (!executorIdToPausedTaskIds(firstExec).contains(tid) &&
-                    taskIdToTaskSetManager(tid).neptunePriority > manager.neptunePriority) {
-                    sc.conf.getNeptuneTaskPolicy() match {
-                      case TaskState.PAUSED =>
-                        if (pauseTaskAttempt(tid, false)) releasedCores += 1
-                      case TaskState.KILLED =>
-                        if (killTaskAttempt(tid, false, "")) releasedCores += 1
+        if (!validExecs.isEmpty) {
+          val firstExec = validExecs.head
+          var releasedCores = 0
+          do {
+            releasedCores = 0
+            executorIdToRunningTaskIds.get(firstExec).foreach {
+              tasksIds =>
+                tasksIds.foreach {
+                  tid =>
+                    if (!executorIdToPausedTaskIds(firstExec).contains(tid) &&
+                      taskIdToTaskSetManager(tid).neptunePriority > manager.neptunePriority) {
+                      sc.conf.getNeptuneTaskPolicy() match {
+                        case TaskState.PAUSED =>
+                          if (pauseTaskAttempt(tid, false)) releasedCores += 1
+                        case TaskState.KILLED =>
+                          if (killTaskAttempt(tid, false, "")) releasedCores += 1
+                      }
                     }
-                  }
-              }
-          }
-        } while (releasedCores < tasks.length)
+                }
+            }
+          } while (releasedCores < tasks.length)
+        } else {
+          log.warn("No Valid Executors found to Pause tasks!")
+        }
         // Avoid Triggering another offer - now done in LocalSchedulerBackend PauseEvent
         return
       }
