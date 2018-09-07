@@ -19,8 +19,11 @@ package org.apache.spark.scheduler
 
 import org.apache.spark.{LocalSparkContext, SparkConf, SparkContext, SparkFunSuite}
 import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
+import org.apache.spark.scheduler.cluster.ExecutorData
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.AccumulatorV2
+
+import scala.collection.mutable
 
 class ExternalClusterManagerSuite extends SparkFunSuite with LocalSparkContext {
   test("launch of backend and scheduler") {
@@ -69,6 +72,7 @@ private class DummySchedulerBackend extends SchedulerBackend {
   def stop() {}
   def reviveOffers() {}
   def defaultParallelism(): Int = 1
+  override def getExecutorDataMap(): mutable.HashMap[String, ExecutorData] = null
 }
 
 private class DummyTaskScheduler extends TaskScheduler {

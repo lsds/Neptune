@@ -23,18 +23,17 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import java.util.{Locale, Timer, TimerTask}
 
-import scala.collection.Set
-import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
-import scala.util.Random
-
-import org.apache.spark._
 import org.apache.spark.TaskState.TaskState
-import org.apache.spark.internal.Logging
-import org.apache.spark.internal.config
+import org.apache.spark._
+import org.apache.spark.internal.{Logging, config}
 import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
 import org.apache.spark.scheduler.TaskLocality.TaskLocality
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.{AccumulatorV2, ThreadUtils, Utils}
+
+import scala.collection.Set
+import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
+import scala.util.Random
 
 /**
  * Schedules tasks for multiple types of clusters by acting through a SchedulerBackend.
@@ -216,11 +215,33 @@ private[spark] class TaskSchedulerImpl(
       }
       hasReceivedTask = true
 
-      // Neptune: Pause accordingly => POC only: use the first task
-      if (sc.conf.isNeptuneCoroutinesEnabled() && !executorIdToRunningTaskIds.isEmpty &&
-        manager.neptunePriority == 1) {
-        val firstExec = executorIdToRunningTaskIds.head._1
-        // TODO: check free cores before pausing and take into account the task number
+
+      backend.reviveOffers()
+
+      /**
+       * ::Neptune:: Pause accordingly => Check that:
+       *    Coroutines are enabled
+       *    This is a high-priority stage
+       *    There is NO executor with enough free cores
+       *    There are running tasks that we can pause
+       */
+
+      val availableExecs = backend.getExecutorDataMap().count( exec => exec._2.freeCores >= tasks.length )
+      // Not enough free resources
+      if (sc.conf.isNeptuneCoroutinesEnabled() && manager.neptunePriority == 1 &&
+        availableExecs == 0 && !executorIdToRunningTaskIds.isEmpty) {
+
+        def execWithEnoughLowPriTasks(executorId: String) : Boolean = {
+          executorIdToRunningTaskIds.get(executorId).get.filter( taskId =>
+            // Lower priority means more CRITICAL
+            taskIdToTaskSetManager(taskId).neptunePriority > manager.neptunePriority
+          ).size >= tasks.length
+        }
+        // Find executors with enough low-pri tasks we can pause
+        val validExecs = backend.getExecutorDataMap().filterKeys(execWithEnoughLowPriTasks).keys
+        log.info(s"Neptune found ${validExecs} Executors with tasks to PAUSE")
+        // Executor selection policy (random for now)
+        val firstExec = validExecs.head
         var releasedCores = 0
         do {
           releasedCores = 0

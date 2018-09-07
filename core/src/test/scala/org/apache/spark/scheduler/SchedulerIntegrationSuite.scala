@@ -17,7 +17,7 @@
 package org.apache.spark.scheduler
 
 import java.util.Properties
-import java.util.concurrent.{TimeoutException, TimeUnit}
+import java.util.concurrent.{TimeUnit, TimeoutException}
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 
 import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
@@ -35,7 +35,10 @@ import org.apache.spark._
 import org.apache.spark.TaskState._
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
+import org.apache.spark.scheduler.cluster.ExecutorData
 import org.apache.spark.util.{CallSite, ThreadUtils, Utils}
+
+import scala.collection.mutable
 
 /**
  * Tests for the  entire scheduler code -- DAGScheduler, TaskSchedulerImpl, TaskSets,
@@ -438,6 +441,8 @@ private[spark] class SingleCoreMockBackend(
   override val executorIdToExecutor: Map[String, ExecutorTaskStatus] = Map(
     localExecutorId -> new ExecutorTaskStatus(localExecutorHostname, localExecutorId, freeCores)
   )
+
+  override def getExecutorDataMap(): mutable.HashMap[String, ExecutorData] = null
 }
 
 case class ExecutorTaskStatus(host: String, executorId: String, var freeCores: Int)

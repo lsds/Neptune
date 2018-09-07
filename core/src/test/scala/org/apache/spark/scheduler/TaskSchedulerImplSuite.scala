@@ -30,13 +30,17 @@ import org.scalatest.mockito.MockitoSugar
 import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config
+import org.apache.spark.scheduler.cluster.ExecutorData
 import org.apache.spark.util.ManualClock
+
+import scala.collection.mutable
 
 class FakeSchedulerBackend extends SchedulerBackend {
   def start() {}
   def stop() {}
   def reviveOffers() {}
   def defaultParallelism(): Int = 1
+  override def getExecutorDataMap(): mutable.HashMap[String, ExecutorData] = null
 }
 
 class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with BeforeAndAfterEach

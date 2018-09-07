@@ -94,6 +94,7 @@ private[spark] class TaskSetManager(
   val weight = 1
   val minShare = 0
   var priority = taskSet.priority
+  // Lower priority means more CRITICAL
   var neptunePriority: Int = if (taskSet.properties != null  && taskSet.properties.get("neptune_pri") != null) {
     Integer.parseInt(taskSet.properties.get("neptune_pri").toString)
   } else 0

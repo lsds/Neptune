@@ -20,6 +20,9 @@ import scala.concurrent.duration._
 
 import org.apache.spark._
 import org.apache.spark.internal.config
+import org.apache.spark.scheduler.cluster.ExecutorData
+
+import scala.collection.mutable
 
 class BlacklistIntegrationSuite extends SchedulerIntegrationSuite[MultiExecutorMockBackend]{
 
@@ -145,6 +148,8 @@ class MultiExecutorMockBackend(
   }
 
   override def defaultParallelism(): Int = nHosts * nExecutorsPerHost * nCoresPerExecutor
+
+  override def getExecutorDataMap(): mutable.HashMap[String, ExecutorData] = null
 }
 
 class MockRDDWithLocalityPrefs(

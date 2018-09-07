@@ -24,7 +24,7 @@ import org.scalatest.{BeforeAndAfter, PrivateMethodTester}
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.scheduler._
 import org.apache.spark.scheduler.ExternalClusterManager
-import org.apache.spark.scheduler.cluster.ExecutorInfo
+import org.apache.spark.scheduler.cluster.{ExecutorData, ExecutorInfo}
 import org.apache.spark.scheduler.local.LocalSchedulerBackend
 import org.apache.spark.util.ManualClock
 
@@ -1282,4 +1282,5 @@ private class DummyLocalSchedulerBackend (sc: SparkContext, sb: SchedulerBackend
   override def killExecutorsOnHost(host: String): Boolean = {
     false
   }
+  override def getExecutorDataMap(): mutable.HashMap[String, ExecutorData] = null
 }
