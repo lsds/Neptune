@@ -18,7 +18,6 @@
 package org.apache.spark.scheduler
 
 import java.nio.ByteBuffer
-import java.util.{Locale, Timer, TimerTask}
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import java.util.{Locale, Timer, TimerTask}
@@ -219,18 +218,22 @@ private[spark] class TaskSchedulerImpl(
       backend.reviveOffers()
 
       /**
-       * ::Neptune:: Pause accordingly => Check that:
+       * ::Neptune:: PausePolicy => Check that:
        *    Coroutines are enabled
        *    This is a high-priority stage
        *    There is NO executor with enough free cores
        *    There are running tasks that we can pause
        */
 
-      val availableExecs = backend.getExecutorDataMap().count( exec => exec._2.freeCores >= tasks.length )
+      val availableExecs = backend.getExecutorDataMap().filter(exec => exec._2.freeCores >= tasks.length)
+      logDebug(" === Current Executor state ===")
+      for (exec <- backend.getExecutorDataMap().keys)
+        logDebug(s"Executor: ${exec} freeCores: ${backend.getExecutorDataMap().get(exec).get.freeCores}" +
+          s" totalCores: ${backend.getExecutorDataMap().get(exec).get.totalCores}")
+      logDebug(" === Current Executor state ===")
       // Not enough free resources
       if (sc.conf.isNeptuneCoroutinesEnabled() && manager.neptunePriority == 1 &&
-        availableExecs == 0 && !executorIdToRunningTaskIds.isEmpty) {
-
+        (availableExecs.size == 0) && !executorIdToRunningTaskIds.isEmpty) {
         def execWithEnoughLowPriTasks(executorId: String) : Boolean = {
           executorIdToRunningTaskIds.get(executorId).get.filter( taskId =>
             // Lower priority means more CRITICAL
@@ -239,31 +242,29 @@ private[spark] class TaskSchedulerImpl(
         }
         // Find executors with enough low-pri tasks we can pause
         val validExecs = backend.getExecutorDataMap().filterKeys(execWithEnoughLowPriTasks).keys
-        log.info(s"Neptune found ${validExecs} Executors with tasks to PAUSE")
+        logInfo(s"Neptune found ${validExecs} Executors with [${tasks.length}] tasks to PAUSE")
         // Executor selection policy (random for now)
         if (!validExecs.isEmpty) {
           val firstExec = validExecs.head
-          var releasedCores = 0
-          do {
-            releasedCores = 0
-            executorIdToRunningTaskIds.get(firstExec).foreach {
-              tasksIds =>
-                tasksIds.foreach {
-                  tid =>
-                    if (!executorIdToPausedTaskIds(firstExec).contains(tid) &&
-                      taskIdToTaskSetManager(tid).neptunePriority > manager.neptunePriority) {
-                      sc.conf.getNeptuneTaskPolicy() match {
-                        case TaskState.PAUSED =>
-                          if (pauseTaskAttempt(tid, false)) releasedCores += 1
-                        case TaskState.KILLED =>
-                          if (killTaskAttempt(tid, false, "")) releasedCores += 1
-                      }
+          executorIdToRunningTaskIds.get(firstExec).foreach {
+            tasksIds =>
+              var releasedCores = 0
+              tasksIds.foreach {
+                tid =>
+                  if ( (releasedCores < tasks.length) &&
+                    !executorIdToPausedTaskIds(firstExec).contains(tid) &&
+                    (taskIdToTaskSetManager(tid).neptunePriority > manager.neptunePriority) ) {
+                    sc.conf.getNeptuneTaskPolicy() match {
+                      case TaskState.PAUSED =>
+                        if (pauseTaskAttempt(tid, false)) releasedCores += 1
+                      case TaskState.KILLED =>
+                        if (killTaskAttempt(tid, false, "")) releasedCores += 1
                     }
-                }
-            }
-          } while (releasedCores < tasks.length)
+                  }
+              }
+          }
         } else {
-          log.warn("No Valid Executors found to Pause tasks!")
+          logWarning("No Valid Executors found to Pause tasks!")
         }
         // Avoid Triggering another offer - now done in LocalSchedulerBackend PauseEvent
         return
@@ -375,9 +376,10 @@ private[spark] class TaskSchedulerImpl(
         val execId = taskIdToExecutorId(tid)
         val execIndex = availableExecIds.indexOf(execId)
         if (availableCpus(execIndex) > 0 && availableExecIds.contains(execId)) {
-          backend.resumeTask(tid, execId)
-          taskSet.handleResumedTask(tid)
-          availableCpus(execIndex) -= CPUS_PER_TASK
+          if (resumeTaskAttempt(tid)) {
+            taskSet.handleResumedTask(tid)
+            availableCpus(execIndex) -= CPUS_PER_TASK
+          }
         }
       }
     }
@@ -457,8 +459,9 @@ private[spark] class TaskSchedulerImpl(
     val availableCpus = shuffledOffers.map(o => o.cores).toArray
     val sortedTaskSets = rootPool.getSortedTaskSetQueue
     for (taskSet <- sortedTaskSets) {
-      logInfo("parentName: %s, name: %s, neptunePri: %s, runningTasks: %s, pausedTasks: %s".format(
-        taskSet.parent.name, taskSet.name, taskSet.neptunePriority, taskSet.runningTasks, taskSet.pausedTasks))
+      logInfo("[%s] [Tasks: %s] \t [Parent: %s] [NeptunePri: %s] [Running: %s] [Paused: %s] [Finished: %s]".format(
+        taskSet.name, taskSet.taskInfos.keys.toList, taskSet.parent.name, taskSet.neptunePriority,
+        taskSet.runningTasks, taskSet.pausedTasks, taskSet.tasksSuccessful))
       if (newExecAvail) {
         taskSet.executorAdded()
       }
