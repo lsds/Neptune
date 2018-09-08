@@ -224,7 +224,7 @@ private[spark] class TaskSchedulerImpl(
        *    There is NO executor with enough free cores
        *    There are running tasks that we can pause
        */
-
+      // TODO: Check free Cores per Executor or in Total instead?
       val availableExecs = backend.getExecutorDataMap().filter(exec => exec._2.freeCores >= tasks.length)
       logDebug(" === Current Executor state ===")
       for (exec <- backend.getExecutorDataMap().keys)
