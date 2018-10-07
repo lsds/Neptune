@@ -214,7 +214,7 @@ private[spark] class ShuffleMapTask(
         context.setCoInstance(call(shuffleWriteCoFuncCast(context, None.asInstanceOf[Any])))
       }
       // Run up to the next yield Point
-      if(context.getcoInstance().pull) {
+      if(!context.getcoInstance().isCompleted && context.getcoInstance().pull) {
         return null
       } else {
         // Need to return the actual result used by the DAGScheduler

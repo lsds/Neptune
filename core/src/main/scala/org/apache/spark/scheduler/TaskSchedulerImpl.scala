@@ -336,6 +336,8 @@ private[spark] class TaskSchedulerImpl(
       val execId = execIdOpt.get
       if (executorIdToPausedTaskIds.contains(execId)) {
         executorIdToPausedTaskIds(execId).remove(taskId)
+        // fast resume-event propagation
+        taskIdToTaskSetManager(taskId).handleResumedTask(taskId)
         backend.resumeTask(taskId, execId)
         return true
       }

@@ -100,7 +100,7 @@ private[spark] class ResultTask[T, U](
         context.setCoInstance(call(coFunc(context, rdd.iterator(partition, context))))
       }
       // Run up to the next yield Point
-      if(context.getcoInstance().pull) {
+      if(!context.getcoInstance().isCompleted && context.getcoInstance().pull) {
         return ().asInstanceOf[U]
       }
       // No need to return the actual result which is captured in the Coroutine Frame
