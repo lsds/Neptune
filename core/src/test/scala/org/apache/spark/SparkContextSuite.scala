@@ -20,6 +20,8 @@ package org.apache.spark
 import java.io.File
 import java.net.{MalformedURLException, URI}
 import java.nio.charset.StandardCharsets
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.concurrent.{Semaphore, TimeUnit}
 
 import scala.concurrent.duration._
@@ -33,8 +35,7 @@ import org.apache.hadoop.mapreduce.lib.input.{TextInputFormat => NewTextInputFor
 import org.scalatest.Matchers._
 import org.scalatest.concurrent.Eventually
 
-import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart, SparkListenerTaskEnd, SparkListenerTaskStart,
-  SparkListenerTaskPaused, SparkListenerTaskResumed}
+import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart, SparkListenerTaskEnd, SparkListenerTaskPaused, SparkListenerTaskResumed, SparkListenerTaskStart}
 import org.apache.spark.util.{ThreadUtils, Utils}
 
 
@@ -53,6 +54,7 @@ class SparkContextSuite extends SparkFunSuite with LocalSparkContext with Eventu
     SparkContextSuite.taskPaused = false
     SparkContextSuite.taskSucceeded = false
     var pauseStart: Long = 0L
+    var pausedCount: Int = 0
 
     val listener = new SparkListener {
       override def onTaskStart(taskStart: SparkListenerTaskStart): Unit = {
@@ -70,14 +72,17 @@ class SparkContextSuite extends SparkFunSuite with LocalSparkContext with Eventu
 
       override def onTaskPaused(taskPaused: SparkListenerTaskPaused): Unit = {
         // scalastyle:off
-        println(s"Pausing Took: ${(System.nanoTime() - pauseStart) / 1e6} ms")
+        val sdf = new SimpleDateFormat("HH:mm:ss.SSS")
+        println(s"${sdf.format(new Date())} Pausing Took: ${(System.nanoTime() - pauseStart) / 1e6} ms")
+        pausedCount += 1
         println(s"Resuming: ${taskPaused.taskInfo.taskId}")
         sc.resumeTaskAttempt(taskPaused.taskInfo.taskId)
       }
 
       override def onTaskResumed(taskResumed: SparkListenerTaskResumed): Unit = {
         // scalastyle:off
-        println(s"Pausing: ${taskResumed.taskInfo.taskId} again")
+        val sdf = new SimpleDateFormat("HH:mm:ss.SSS")
+        println(s"${sdf.format(new Date())} Pausing: ${taskResumed.taskInfo.taskId} again")
         SparkContextSuite.taskPaused = false
         pauseStart = System.nanoTime()
         sc.pauseTaskAttempt(taskResumed.taskInfo.taskId)
@@ -89,24 +94,28 @@ class SparkContextSuite extends SparkFunSuite with LocalSparkContext with Eventu
         }
       }
     }
+    val rddSize = 1000
     sc.addSparkListener(listener)
     eventually(timeout(20.seconds)) {
-      val coRDD = sc.parallelize(1 to 10)
+      val coRDD = sc.parallelize(1 to rddSize, numSlices = 1)
       coRDD.foreach { x =>
-        println("Here")
+        import java.text.SimpleDateFormat
+        val sdf = new SimpleDateFormat("HH:mm:ss.SSS")
+        println(s"${sdf.format(new Date())} Here ${x}")
         // first task attempt (0) will pause, resume and then end
         if (!SparkContextSuite.isTaskStarted) {
           SparkContextSuite.isTaskStarted = true
-          try {
-            Thread.sleep(20)
-          } catch {
-            case e: InterruptedException =>
-            }
-          }
         }
+        try {
+          Thread.sleep(10)
+        } catch {
+          case e: InterruptedException =>
+        }
+      }
     }
     eventually(timeout(10.seconds)) {
       assert(SparkContextSuite.taskSucceeded)
+      assert(rddSize-1  === pausedCount)
     }
   }
 
