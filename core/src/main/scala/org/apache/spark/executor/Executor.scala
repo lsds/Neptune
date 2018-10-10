@@ -219,7 +219,8 @@ private[spark] class Executor(
     if (taskRunner != null) {
       pauseStart = System.nanoTime()
       if (taskRunner.pause(interruptThread)) {
-        pausedTasks.put(taskRunner.taskId, runningTasks.remove(taskId))
+        // Removal from the runningTasks is done by the Executor finally clause
+        pausedTasks.put(taskRunner.taskId, taskRunner)
         return true
       } else {
         logWarning(s"TaskRunner ${taskId} could not be paused")
@@ -450,26 +451,29 @@ private[spark] class Executor(
             res
           }
         } finally {
-          val releasedLocks = env.blockManager.releaseAllLocksForTask(taskId)
-          val freedMemory = taskMemoryManager.cleanUpAllAllocatedMemory()
+          // Neptune: Release memory Only at the completion of a Pausable task
+          if (!task.isPausable || task.context.getcoInstance().isCompleted) {
+            val releasedLocks = env.blockManager.releaseAllLocksForTask(taskId)
+            val freedMemory = taskMemoryManager.cleanUpAllAllocatedMemory()
 
-          if (freedMemory > 0 && !threwException) {
-            val errMsg = s"Managed memory leak detected; size = $freedMemory bytes, TID = $taskId"
-            if (conf.getBoolean("spark.unsafe.exceptionOnMemoryLeak", false)) {
-              throw new SparkException(errMsg)
-            } else {
-              logWarning(errMsg)
+            if (freedMemory > 0 && !threwException) {
+              val errMsg = s"Managed memory leak detected; size = $freedMemory bytes, TID = $taskId"
+              if (conf.getBoolean("spark.unsafe.exceptionOnMemoryLeak", false)) {
+                throw new SparkException(errMsg)
+              } else {
+                logWarning(errMsg)
+              }
             }
-          }
 
-          if (releasedLocks.nonEmpty && !threwException) {
-            val errMsg =
-              s"${releasedLocks.size} block locks were not released by TID = $taskId:\n" +
-                releasedLocks.mkString("[", ", ", "]")
-            if (conf.getBoolean("spark.storage.exceptionOnPinLeak", false)) {
-              throw new SparkException(errMsg)
-            } else {
-              logInfo(errMsg)
+            if (releasedLocks.nonEmpty && !threwException) {
+              val errMsg =
+                s"${releasedLocks.size} block locks were not released by TID = $taskId:\n" +
+                  releasedLocks.mkString("[", ", ", "]")
+              if (conf.getBoolean("spark.storage.exceptionOnPinLeak", false)) {
+                throw new SparkException(errMsg)
+              } else {
+                logInfo(errMsg)
+              }
             }
           }
         }
