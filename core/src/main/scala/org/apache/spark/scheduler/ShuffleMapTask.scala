@@ -27,11 +27,11 @@ import org.apache.spark._
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
+import org.apache.spark.scheduler.ShuffleMapTask.ShuffleCoroutineDeps
 import org.apache.spark.shuffle._
-import org.apache.spark.storage.ShuffleBlockId
-import org.apache.spark.util.Utils
-import org.apache.spark.util.collection.ExternalSorter
-import org.coroutines.{call, coroutine, yieldval, ~>, ~~>}
+import org.apache.spark.shuffle.sort.{BypassMergeSortShuffleHandle, SerializedShuffleHandle, SortShuffleWriter}
+import org.coroutines.{call, coroutine, yieldval, ~>}
+import org.slf4j.Logger
 
 /**
  * A ShuffleMapTask divides the elements of an RDD into multiple buckets (based on a partitioner
@@ -94,9 +94,9 @@ private[spark] class ShuffleMapTask(
       threadMXBean.getCurrentThreadCpuTime - deserializeStartCpuTime
     } else 0L
 
-    val manager = SparkEnv.get.shuffleManager
-    val records = rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
     if (!context.isPausable()) {
+      val manager = SparkEnv.get.shuffleManager
+      val records = rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
       var writer: ShuffleWriter[Any, Any] = null
       try {
         writer = manager.getWriter[Any, Any](dep.shuffleHandle, partitionId, context)
@@ -115,96 +115,23 @@ private[spark] class ShuffleMapTask(
           throw e
       }
     } else {
-      val shuffleBlockResolver: IndexShuffleBlockResolver = manager
-        .shuffleBlockResolver.asInstanceOf[IndexShuffleBlockResolver]
-      val depLoc = dep.shuffleHandle.asInstanceOf[BaseShuffleHandle[Any, Any, Any]].dependency
-      val blockManager = SparkEnv.get.blockManager
-      var sorter: ExternalSorter[Any, Any, Any] = null
       var mapStatus: MapStatus = null
-      val writeMetrics = context.taskMetrics().shuffleWriteMetrics
-
-
       val shuffleWriteCoFunc: (TaskContext, Any) ~> (Int, MapStatus) =
         coroutine { (context: TaskContext, t: Any) => {
-
-          sorter = if (dep.mapSideCombine) {
-            require(dep.aggregator.isDefined, "Map-side combine without Aggregator specified!")
-            new ExternalSorter[Any, Any, Any](
-              context, depLoc.aggregator, Some(dep.partitioner), depLoc.keyOrdering, dep.serializer)
-          } else {
-            // In this case we pass neither an aggregator nor an ordering to the sorter, because we don't
-            // care whether the keys get sorted in each partition; that will be done on the reduce side
-            // if the operation being run is sortByKey.
-            new ExternalSorter[Any, Any, Any](
-              context, aggregator = None, Some(dep.partitioner), ordering = None, dep.serializer)
-          }
-          //  sorter.insertAll(records) Implementation
+          // Early yield point
           if (context.isPaused()) {
             yieldval(0)
           }
-          val shouldCombine = depLoc.aggregator.isDefined
-          if (shouldCombine) {
-            log.warn("[ShuffleWrite] NEPTUNE coarse-grained yield point")
-            // Combine values in-memory first using our AppendOnlyMap
-            val mergeValue = depLoc.aggregator.get.mergeValue
-            val createCombiner = depLoc.aggregator.get.createCombiner
-            var kv: Product2[Any, Any] = null
-            val update = (hadValue: Boolean, oldValue: Any) => {
-              if (hadValue) mergeValue(oldValue, kv._2) else createCombiner(kv._2)
-            }
-            while (records.hasNext) {
-              sorter.addElementsRead()
-              kv = records.next()
-              sorter.map.changeValue((sorter.getPartition(kv._1), kv._1), update)
-              sorter.maybeSpillCollection(usingMap = true)
-            }
-          } else {
-            // Stick values into our buffer
-            while (records.hasNext) {
-              if (context.isPaused()) {
-                yieldval(0)
-              }
-              sorter.addElementsRead()
-              val kv = records.next()
-              sorter.buffer.insert(sorter.getPartition(kv._1), kv._1, kv._2.asInstanceOf[Any])
-              sorter.maybeSpillCollection(usingMap = false)
-            }
-          }
-          //  sorter.insertAll(records) Implementation Up to HERE
-          val output = shuffleBlockResolver.getDataFile(dep.shuffleId, partitionId)
-          val tmp = Utils.tempFileWith(output)
-          try {
-            val blockId = ShuffleBlockId(dep.shuffleId, partitionId, IndexShuffleBlockResolver.NOOP_REDUCE_ID)
-            val partitionLengths = sorter.writePartitionedFile(blockId, tmp)
-            shuffleBlockResolver.writeIndexFileAndCommit(dep.shuffleId, partitionId, partitionLengths, tmp)
-            mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths)
-          } finally {
-            if (tmp.exists() && !tmp.delete()) {
-              logError(s"Error while deleting temp file ${tmp.getAbsolutePath}")
-            }
-          }
-          try {
-            // Stop Code
-            try {
-              ()
-            } finally {
-              // Clean up our sorter, which may have its own intermediate files
-              if (sorter != null) {
-                val startTime = System.nanoTime()
-                sorter.stop()
-                writeMetrics.incWriteTime(System.nanoTime - startTime)
-                sorter = null
-              }
-            }
-          } catch {
-            case e: Exception =>
-              try {
-                ()
-              } catch {
-                case e: Exception =>
-                  log.debug("Could not stop writer", e)
-              }
-              throw e
+          dep.shuffleHandle match {
+            case unsafeShuffleHandle: SerializedShuffleHandle[Any, Any] =>
+              log.error("HANDLE unsafeShuffleHandle NOT IMPLEMENTED!!!!")
+              throw new Exception("HANDLE unsafeShuffleHandle NOT IMPLEMENTED!!!!")
+            case bypassMergeSortHandle: BypassMergeSortShuffleHandle[Any, Any] =>
+              log.info("Using bypassMergeSortHandle Co")
+              mapStatus = SortShuffleWriter.bypassMergeSortShuffleWriter(context, ShuffleCoroutineDeps(rdd, dep, partition, partitionId, log))
+            case baseShuffleHandle: BaseShuffleHandle[Any, Any, Any] =>
+              log.info("Using SortShuffleWritter Co")
+              mapStatus = SortShuffleWriter.sortShuffleWriter(context, ShuffleCoroutineDeps(rdd, dep, partition, partitionId, log))
           }
           mapStatus
         }
@@ -226,4 +153,9 @@ private[spark] class ShuffleMapTask(
   override def preferredLocations: Seq[TaskLocation] = preferredLocs
 
   override def toString: String = "ShuffleMapTask(%d, %d)".format(stageId, partitionId)
+}
+
+object ShuffleMapTask {
+  case class ShuffleCoroutineDeps(rdd: RDD[_], dep: ShuffleDependency[_, _, _], partition: Partition,
+                                  partitionId: Int, log: Logger)
 }
