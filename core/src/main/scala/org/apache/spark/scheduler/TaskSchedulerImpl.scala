@@ -372,7 +372,8 @@ private[spark] class TaskSchedulerImpl(
       tasks: IndexedSeq[ArrayBuffer[TaskDescription]]) : Boolean = {
 
     // Neptune: Take care of paused tasks first
-    if (sc.conf.isNeptuneCoroutinesEnabled()) {
+    // In Manual Scheduling mode (testing) use listener for task scheduling
+    if (sc.conf.isNeptuneCoroutinesEnabled() && !sc.conf.isNeptuneManualSchedulingEnabled()) {
       val availableExecIds = shuffledOffers.map(o => o.executorId).toArray
       for (tid: Long <- taskSet.pausedTasksSet) {
         val execId = taskIdToExecutorId(tid)

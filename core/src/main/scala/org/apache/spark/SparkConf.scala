@@ -456,6 +456,22 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
     }
   }
 
+  def enableNeptuneManualScheduling(): Unit = {
+    set("spark.neptune.task.manual.scheduling", true.toString)
+  }
+
+  def disableNeptuneManualScheduling(): Unit = {
+    set("spark.neptune.task.manual.scheduling", false.toString)
+  }
+
+  def isNeptuneManualSchedulingEnabled(): Boolean = {
+    getOption("spark.neptune.task.manual.scheduling") match {
+      case Some("true") => true
+      case Some("false") => false
+      case _ => false
+    }
+  }
+
   def enableNeptuneTwoLevelScheduling(nschedulers: Int): Unit = {
     set("spark.neptune.schedulers", s"$nschedulers")
   }

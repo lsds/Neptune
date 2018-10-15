@@ -438,8 +438,8 @@ private[spark] class Executor(
               task.context.getcoInstance().result
             } else {
               // coroutine pause/yieldval case
-              logInfo(s"Task yielded in ${(System.nanoTime()-pauseStart) / 1e6} ms")
-              ()
+              logInfo(s"TID ${taskId} yielded in ${(System.nanoTime()-pauseStart) / 1e6} ms")
+              null
             }
           } else {
             logInfo(s"Running normal Task (TID $taskId)")
@@ -477,7 +477,8 @@ private[spark] class Executor(
             }
           }
         }
-        if (task.context.isPaused()) {
+        //  task.context.isPaused()
+        if (value == null) {
           execBackend.statusUpdate(taskId, TaskState.PAUSED, EMPTY_BYTE_BUFFER)
         } else {
           task.context.fetchFailed.foreach { fetchFailure =>
