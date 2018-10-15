@@ -118,10 +118,6 @@ private[spark] class ShuffleMapTask(
       var mapStatus: MapStatus = null
       val shuffleWriteCoFunc: (TaskContext, Any) ~> (Int, MapStatus) =
         coroutine { (context: TaskContext, t: Any) => {
-          // Early yield point
-          if (context.isPaused()) {
-            yieldval(0)
-          }
           dep.shuffleHandle match {
             case unsafeShuffleHandle: SerializedShuffleHandle[Any, Any] =>
               log.error("HANDLE unsafeShuffleHandle NOT IMPLEMENTED!!!!")

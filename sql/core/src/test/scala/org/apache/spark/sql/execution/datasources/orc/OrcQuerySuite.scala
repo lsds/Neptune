@@ -515,7 +515,7 @@ abstract class OrcQueryTest extends OrcTest {
         oif.createRecordReader(split, hadoopAttemptContext)
       }
 
-      val recordsIterator = new RecordReaderIterator[OrcStruct](orcRecordReader)
+      val recordsIterator = new RecordReaderIterator[OrcStruct](orcRecordReader, null)
       try {
         assert(recordsIterator.next().toString == "{null, null}")
       } finally {

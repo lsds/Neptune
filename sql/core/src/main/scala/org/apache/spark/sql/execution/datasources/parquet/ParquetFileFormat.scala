@@ -417,7 +417,7 @@ class ParquetFileFormat
         reader
       }
 
-      val iter = new RecordReaderIterator(parquetReader)
+      val iter = new RecordReaderIterator(parquetReader, taskContext.get)
       taskContext.foreach(_.addTaskCompletionListener(_ => iter.close()))
 
       // UnsafeRowParquetRecordReader appends the columns internally to avoid another copy.

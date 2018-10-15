@@ -20,7 +20,7 @@ package org.apache.spark.sql.execution.datasources
 import java.io.Closeable
 
 import org.apache.hadoop.mapreduce.RecordReader
-
+import org.apache.spark.TaskContext
 import org.apache.spark.sql.catalyst.InternalRow
 
 /**
@@ -30,7 +30,7 @@ import org.apache.spark.sql.catalyst.InternalRow
  * column batches by pretending they are rows.
  */
 class RecordReaderIterator[T](
-    private[this] var rowReader: RecordReader[_, T]) extends Iterator[T] with Closeable {
+    private[this] var rowReader: RecordReader[_, T], taskContext: TaskContext ) extends Iterator[T] with Closeable {
   private[this] var havePair = false
   private[this] var finished = false
 
@@ -57,11 +57,14 @@ class RecordReaderIterator[T](
   }
 
   override def close(): Unit = {
-    if (rowReader != null) {
-      try {
-        rowReader.close()
-      } finally {
-        rowReader = null
+    // Neptune: release resources only when task is not paused!!
+    if (taskContext == null || taskContext.isCompleted()) {
+      if (rowReader != null) {
+        try {
+          rowReader.close()
+        } finally {
+          rowReader = null
+        }
       }
     }
   }

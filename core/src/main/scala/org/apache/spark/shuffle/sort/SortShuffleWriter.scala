@@ -18,6 +18,7 @@
 package org.apache.spark.shuffle.sort
 
 import java.io.{File, FileInputStream, FileOutputStream}
+import java.util.UUID
 
 import com.google.common.io.Closeables
 import org.apache.spark._
@@ -244,18 +245,24 @@ private[spark] object SortShuffleWriter {
       val partitionWriterSegments = new Array[FileSegment](dep.partitioner.numPartitions)
       val fileBufferSize = SparkEnv.get.conf.getSizeAsKb("spark.shuffle.file.buffer", "32k") * 1024
       val transferToEnabled = SparkEnv.get.conf.getBoolean("spark.file.transferTo", true)
+      val syncWrites = SparkEnv.get.conf.getBoolean("spark.shuffle.sync", false)
       var i = 0
       while (i < dep.partitioner.numPartitions) {
         if (context.isPaused()) {
           yieldval(0)
         }
-        val tempShuffleBlockIdPlusFile = blockManager.diskBlockManager.createTempShuffleBlock
-        val file = tempShuffleBlockIdPlusFile._2
-        val blockId = tempShuffleBlockIdPlusFile._1
-        partitionWriters(i) = blockManager.getDiskWriter(blockId, file, serInstance, fileBufferSize.toInt, writeMetrics)
+        // blockManager.diskBlockManager.createTempShuffleBlock
+        var blockId = new TempShuffleBlockId(UUID.randomUUID())
+          while (blockManager.diskBlockManager.getFile(blockId).exists()) {
+            blockId = new TempShuffleBlockId(UUID.randomUUID())
+          }
+        val file = blockManager.diskBlockManager.getFile(blockId)
+        // partitionWriters(i) = blockManager.getDiskWriter(blockId, file, serInstance, fileBufferSize.toInt, writeMetrics)
+        partitionWriters(i) = new DiskBlockObjectWriter(file, blockManager.serializerManager, serInstance, fileBufferSize.toInt,
+          syncWrites, writeMetrics, blockId)
         i += 1
       }
-      //    writeMetrics.incWriteTime(System.nanoTime() - openStartTime)
+      // writeMetrics.incWriteTime(System.nanoTime() - openStartTime)
 
       while (records.hasNext) {
         if (context.isPaused()) {

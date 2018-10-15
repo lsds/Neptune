@@ -371,7 +371,7 @@ private[spark] class Executor(
       threadId = Thread.currentThread.getId
       Thread.currentThread.setName(threadName)
       val threadMXBean = ManagementFactory.getThreadMXBean
-      val taskMemoryManager = new TaskMemoryManager(env.memoryManager, taskId)
+      val taskMemoryManager = None
       val deserializeStartTime = System.currentTimeMillis()
       val deserializeStartCpuTime = if (threadMXBean.isCurrentThreadCpuTimeSupported) {
         threadMXBean.getCurrentThreadCpuTime
@@ -395,7 +395,7 @@ private[spark] class Executor(
           task = ser.deserialize[Task[Any]](
             taskDescription.serializedTask, Thread.currentThread.getContextClassLoader)
           task.localProperties = taskDescription.properties
-          task.setTaskMemoryManager(taskMemoryManager)
+          task.setTaskMemoryManager(new TaskMemoryManager(env.memoryManager, taskId))
 
           // If this task has been killed before we deserialized it, let's quit now. Otherwise,
           // continue executing the task.
@@ -417,7 +417,6 @@ private[spark] class Executor(
             env.mapOutputTracker.asInstanceOf[MapOutputTrackerWorker].updateEpoch(task.epoch)
           }
         }
-
         // Run the actual task and measure its runtime.
         taskStart = System.currentTimeMillis()
         taskStartCpu = if (threadMXBean.isCurrentThreadCpuTimeSupported) {
@@ -454,7 +453,7 @@ private[spark] class Executor(
           // Neptune: Release memory Only at the completion of a Pausable task
           if (!task.isPausable || task.context.getcoInstance().isCompleted) {
             val releasedLocks = env.blockManager.releaseAllLocksForTask(taskId)
-            val freedMemory = taskMemoryManager.cleanUpAllAllocatedMemory()
+            val freedMemory = task.getTaskMemoryManager().cleanUpAllAllocatedMemory()
 
             if (freedMemory > 0 && !threwException) {
               val errMsg = s"Managed memory leak detected; size = $freedMemory bytes, TID = $taskId"

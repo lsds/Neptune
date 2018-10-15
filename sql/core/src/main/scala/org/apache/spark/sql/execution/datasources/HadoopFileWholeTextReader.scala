@@ -46,7 +46,7 @@ class HadoopFileWholeTextReader(file: PartitionedFile, conf: Configuration)
     val hadoopAttemptContext = new TaskAttemptContextImpl(conf, attemptId)
     val reader = new WholeTextFileRecordReader(fileSplit, hadoopAttemptContext, 0)
     reader.initialize(fileSplit, hadoopAttemptContext)
-    new RecordReaderIterator(reader)
+    new RecordReaderIterator(reader, null)
   }
 
   override def hasNext: Boolean = iterator.hasNext

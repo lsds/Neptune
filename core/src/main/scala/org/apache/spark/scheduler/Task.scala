@@ -122,13 +122,18 @@ private[spark] abstract class Task[T](
           case t: Throwable =>
             e.addSuppressed(t)
         }
-        context.markTaskCompleted(Some(e))
+        // Neptune: RecordReaderIterator AutoCloseable (close) now depends on this completion event
+        if (!context.isPaused()) {
+          context.markTaskCompleted(Some(e))
+        }
         throw e
     } finally {
       try {
         // Call the task completion callbacks. If "markTaskCompleted" is called twice, the second
         // one is no-op.
-        context.markTaskCompleted(None)
+        if (!context.isPaused()) {
+          context.markTaskCompleted(None)
+        }
       } finally {
         try {
           Utils.tryLogNonFatalError {
@@ -157,6 +162,10 @@ private[spark] abstract class Task[T](
 
   def setTaskMemoryManager(taskMemoryManager: TaskMemoryManager): Unit = {
     this.taskMemoryManager = taskMemoryManager
+  }
+
+  def getTaskMemoryManager(): TaskMemoryManager = {
+    return taskMemoryManager
   }
 
   def runTask(context: TaskContext): T
