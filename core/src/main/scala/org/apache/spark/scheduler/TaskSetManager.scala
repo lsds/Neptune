@@ -774,10 +774,11 @@ private[spark] class TaskSetManager(
   /**
    * ::Neptune:: Notifies the DAGScheduler that the task has been paused.
    */
-  def handlePausedTask(tid: Long): Unit = {
+  def handlePausedTask(tid: Long, serializedData: ByteBuffer): Unit = {
     val info = taskInfos(tid)
     val index = info.index
-    info.markPaused(TaskState.PAUSED, clock.getTimeMillis())
+    info.markPaused(TaskState.PAUSED)
+    info.pauseLatency = SparkEnv.get.serializer.newInstance().deserialize(serializedData)
     addPausedTask(tid)
     removeRunningTask(tid)
     sched.dagScheduler.taskPaused(tasks(index), info)
@@ -786,11 +787,12 @@ private[spark] class TaskSetManager(
   /**
    * ::Neptune:: Notifies the DAGScheduler that the task has been resumed.
    */
-  def handleResumedTask(tid: Long): Unit = {
+  def handleResumedTask(tid: Long, serializedData: ByteBuffer): Unit = {
     val info = taskInfos(tid)
     val index = info.index
     // Reuse pauseTime field to store resume clock time
-    info.markPaused(TaskState.RUNNING, clock.getTimeMillis())
+    info.markPaused(TaskState.RUNNING)
+    info.resumeLatency = SparkEnv.get.serializer.newInstance().deserialize(serializedData)
     addRunningTask(tid)
     removePausedTask(tid)
     // Add to runningSet is done in the resourceOffer method

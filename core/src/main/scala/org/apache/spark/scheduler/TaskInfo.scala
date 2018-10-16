@@ -66,7 +66,9 @@ class TaskInfo(
    */
   var finishTime: Long = 0
 
-  var pauseTime: Long = 0
+  var pauseLatency: Double = 0.0
+
+  var resumeLatency: Double = 0.0
 
   var failed = false
 
@@ -89,10 +91,8 @@ class TaskInfo(
     }
   }
 
-  private[spark] def markPaused(state: TaskState, time: Long) {
+  private[spark] def markPaused(state: TaskState) {
     // pauseTime should be set larger than 0, otherwise "paused" below will return false.
-    assert(time > 0)
-    pauseTime = time
     if (state == TaskState.PAUSED) {
       paused = true
     }

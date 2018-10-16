@@ -337,7 +337,7 @@ private[spark] class TaskSchedulerImpl(
       if (executorIdToPausedTaskIds.contains(execId)) {
         executorIdToPausedTaskIds(execId).remove(taskId)
         // fast resume-event propagation
-        taskIdToTaskSetManager(taskId).handleResumedTask(taskId)
+        // taskIdToTaskSetManager(taskId).handleResumedTask(taskId)
         backend.resumeTask(taskId, execId)
         return true
       }
@@ -380,7 +380,8 @@ private[spark] class TaskSchedulerImpl(
         val execIndex = availableExecIds.indexOf(execId)
         if (availableCpus(execIndex) > 0 && availableExecIds.contains(execId)) {
           if (resumeTaskAttempt(tid)) {
-            taskSet.handleResumedTask(tid)
+            // fast resume-event propagatio
+            //  taskSet.handleResumedTask(tid)
             availableCpus(execIndex) -= CPUS_PER_TASK
           }
         }
@@ -532,7 +533,11 @@ private[spark] class TaskSchedulerImpl(
             }
             // Neptune: notify that the Task has been paused
             if (TaskState.isPaused(state)) {
-              taskSet.handlePausedTask(tid)
+              taskSet.handlePausedTask(tid, serializedData)
+            }
+            // Neptune: notify that the Task has been resumed
+            if (TaskState.isResumed(state)) {
+              taskSet.handleResumedTask(tid, serializedData)
             }
           case None =>
             logError(

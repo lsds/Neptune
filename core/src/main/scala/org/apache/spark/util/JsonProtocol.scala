@@ -305,7 +305,7 @@ private[spark] object JsonProtocol {
     ("Locality" -> taskInfo.taskLocality.toString) ~
     ("Speculative" -> taskInfo.speculative) ~
     ("Getting Result Time" -> taskInfo.gettingResultTime) ~
-    ("Pause Time" -> taskInfo.pauseTime) ~
+    ("Pause Latency" -> taskInfo.pauseLatency) ~
     ("Finish Time" -> taskInfo.finishTime) ~
     ("Failed" -> taskInfo.failed) ~
     ("Killed" -> taskInfo.killed) ~
@@ -778,7 +778,7 @@ private[spark] object JsonProtocol {
       new TaskInfo(taskId, index, attempt, launchTime, executorId, host, taskLocality, speculative)
     taskInfo.gettingResultTime = gettingResultTime
     taskInfo.finishTime = finishTime
-    taskInfo.pauseTime = pauseTime
+    taskInfo.pauseLatency = pauseTime
     taskInfo.failed = failed
     taskInfo.killed = killed
     taskInfo.setAccumulables(accumulables)

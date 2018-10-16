@@ -207,7 +207,6 @@ private[spark] class Executor(
   }
 
   var pauseStart: Long = 0L
-
   /**
    * ::Neptune:: Pause a Cooperative Task
    * @param taskId
@@ -231,6 +230,7 @@ private[spark] class Executor(
     return false
   }
 
+  var resumeStart: Long = 0L
   /**
    * ::Neptune:: Resume a Cooperative Task
    * @param taskId
@@ -243,6 +243,8 @@ private[spark] class Executor(
       val trx: TaskContext = tr.task.context
       if (trx != null) {
         trx.markPaused(false)
+        tr.task.getTaskMemoryManager().showMemoryUsage()
+        resumeStart = System.nanoTime()
         runningTasks.put(taskId, tr)
         threadPool.execute(tr)
         return true
@@ -341,6 +343,7 @@ private[spark] class Executor(
             if (task.context == null) {
               logWarning("Cannot pause empty context Task (not running)")
             } else {
+              task.getTaskMemoryManager().showMemoryUsage()
               task.pause(interruptThread)
               return true
             }
@@ -423,9 +426,16 @@ private[spark] class Executor(
           threadMXBean.getCurrentThreadCpuTime
         } else 0L
         var threwException = true
+        var yieldLatency = 0.0
         val value = try {
           if (task.isPausable) {
             logInfo(s"Running Pausable Task (TID $taskId)")
+            if (task.context != null) {
+              // resume case
+              val resumeLatency = (System.nanoTime()-resumeStart) / 1e6
+              logInfo(s"TID ${taskId} resumed in ${resumeLatency} ms")
+              execBackend.statusUpdate(taskId, TaskState.RESUMED, ser.serialize(resumeLatency))
+            }
             task.run(
                 taskAttemptId = taskId,
                 attemptNumber = taskDescription.attemptNumber,
@@ -437,7 +447,8 @@ private[spark] class Executor(
               task.context.getcoInstance().result
             } else {
               // coroutine pause/yieldval case
-              logInfo(s"TID ${taskId} yielded in ${(System.nanoTime()-pauseStart) / 1e6} ms")
+              yieldLatency = (System.nanoTime()-pauseStart) / 1e6
+              logInfo(s"TID ${taskId} yielded in ${yieldLatency} ms")
               null
             }
           } else {
@@ -478,7 +489,7 @@ private[spark] class Executor(
         }
         //  task.context.isPaused()
         if (value == null) {
-          execBackend.statusUpdate(taskId, TaskState.PAUSED, EMPTY_BYTE_BUFFER)
+          execBackend.statusUpdate(taskId, TaskState.PAUSED, ser.serialize(yieldLatency))
         } else {
           task.context.fetchFailed.foreach { fetchFailure =>
             // uh-oh.  it appears the user code has caught the fetch-failure without throwing any
