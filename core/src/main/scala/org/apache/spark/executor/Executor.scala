@@ -214,7 +214,7 @@ private[spark] class Executor(
    * @return
    */
   def pauseTask(taskId: Long, interruptThread: Boolean): Boolean = {
-    val taskRunner: TaskRunner = runningTasks.get(taskId)
+    val taskRunner: TaskRunner = runningTasks.remove(taskId)
     if (taskRunner != null) {
       pauseStart = System.nanoTime()
       if (taskRunner.pause(interruptThread)) {
@@ -243,7 +243,8 @@ private[spark] class Executor(
       val trx: TaskContext = tr.task.context
       if (trx != null) {
         trx.markPaused(false)
-        tr.task.getTaskMemoryManager().showMemoryUsage()
+//        tr.task.getTaskMemoryManager().showMemoryUsage()
+        logInfo(s"To Resume TID ${taskId} taskRunner ${tr}")
         resumeStart = System.nanoTime()
         runningTasks.put(taskId, tr)
         threadPool.execute(tr)
@@ -343,7 +344,7 @@ private[spark] class Executor(
             if (task.context == null) {
               logWarning("Cannot pause empty context Task (not running)")
             } else {
-              task.getTaskMemoryManager().showMemoryUsage()
+//              task.getTaskMemoryManager().showMemoryUsage()
               task.pause(interruptThread)
               return true
             }
@@ -676,7 +677,9 @@ private[spark] class Executor(
             uncaughtExceptionHandler.uncaughtException(Thread.currentThread(), t)
           }
       } finally {
-        runningTasks.remove(taskId)
+        if (task == null || task.context == null || task.context.isCompleted()) {
+          runningTasks.remove(taskId)
+        }
       }
     }
 

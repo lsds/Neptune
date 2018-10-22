@@ -123,6 +123,7 @@ private[spark] abstract class Task[T](
             e.addSuppressed(t)
         }
         // Neptune: RecordReaderIterator AutoCloseable (close) now depends on this completion event
+        // Neptune: Executor run finally clause also depends on this
         if (!context.isPaused()) {
           context.markTaskCompleted(Some(e))
         }
