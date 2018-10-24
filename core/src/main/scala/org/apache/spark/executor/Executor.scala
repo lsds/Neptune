@@ -463,7 +463,7 @@ private[spark] class Executor(
           }
         } finally {
           // Neptune: Release memory Only at the completion of a Pausable task
-          if (!task.isPausable || task.context.getcoInstance().isCompleted) {
+          if (task == null || !task.isPausable || task.context.isCompleted()) {
             val releasedLocks = env.blockManager.releaseAllLocksForTask(taskId)
             val freedMemory = task.getTaskMemoryManager().cleanUpAllAllocatedMemory()
 
