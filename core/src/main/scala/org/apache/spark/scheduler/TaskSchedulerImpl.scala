@@ -379,7 +379,7 @@ private[spark] class TaskSchedulerImpl(
         val execIndex = availableExecIds.indexOf(execId)
         if (availableCpus(execIndex) > 0 && availableExecIds.contains(execId)) {
           if (resumeTaskAttempt(tid)) {
-            // fast resume-event propagatio
+            // fast resume-event propagation
             //  taskSet.handleResumedTask(tid)
             availableCpus(execIndex) -= CPUS_PER_TASK
           }
@@ -390,7 +390,9 @@ private[spark] class TaskSchedulerImpl(
     // In Manual Scheduling mode (testing) use listener for task scheduling
     if (sc.conf.isNeptuneCoroutinesEnabled() && sc.conf.isNeptuneManualSchedulingEnabled()) {
       // Resources are still used for manual paused tasks
-      if (executorIdToPausedTaskIds.values.size >= availableCpus.sum ) {
+      if (executorIdToPausedTaskIds.size >= availableCpus.sum ) {
+        logInfo(s"Neptune: Manual scheduling ${executorIdToPausedTaskIds.size} Paused Tasks " +
+          s"on ${availableCpus.sum} Cores")
         return false
       }
     }
