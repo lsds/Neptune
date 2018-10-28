@@ -152,17 +152,18 @@ private[spark] object SortShuffleWriter {
     }
     val shouldCombine = depLoc.aggregator.isDefined
     if (shouldCombine) {
-      log.warn("[Neptune] SortShuffleWriter coarse-grained Aggregation yield point")
       // Combine values in-memory first using our AppendOnlyMap
       val mergeValue = depLoc.aggregator.get.mergeValue
       val createCombiner = depLoc.aggregator.get.createCombiner
-      var kv: Product2[Any, Any] = null
-      val update = (hadValue: Boolean, oldValue: Any) => {
-        if (hadValue) mergeValue(oldValue, kv._2) else createCombiner(kv._2)
-      }
       while (records.hasNext) {
+        if (context.isPaused()) {
+          yieldval(0)
+        }
         sorter.addElementsRead()
-        kv = records.next()
+        val kv = records.next()
+        val update = (hadValue: Boolean, oldValue: Any) => {
+          if (hadValue) mergeValue(oldValue, kv._2) else createCombiner(kv._2)
+        }
         sorter.map.changeValue((sorter.getPartition(kv._1), kv._1), update)
         sorter.maybeSpillCollection(usingMap = true)
       }
