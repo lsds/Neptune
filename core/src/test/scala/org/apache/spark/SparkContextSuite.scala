@@ -48,6 +48,7 @@ class SparkContextSuite extends SparkFunSuite with LocalSparkContext with Eventu
     val conf: SparkConf = new SparkConf().setAppName("test").setMaster("local")
     conf.set("spark.scheduler.mode", "NEPTUNE")
     conf.enableNeptuneCoroutines()
+    conf.enableNeptuneManualScheduling()
     sc = new SparkContext(conf)
 
     SparkContextSuite.isTaskStarted = false
@@ -115,7 +116,8 @@ class SparkContextSuite extends SparkFunSuite with LocalSparkContext with Eventu
     }
     eventually(timeout(10.seconds)) {
       assert(SparkContextSuite.taskSucceeded)
-      assert(rddSize-1  === pausedCount)
+      // Total - (First + Last Tasks)
+      assert(rddSize-2  === pausedCount)
     }
   }
 

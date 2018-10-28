@@ -390,8 +390,8 @@ private[spark] class TaskSchedulerImpl(
     // In Manual Scheduling mode (testing) use listener for task scheduling
     if (sc.conf.isNeptuneCoroutinesEnabled() && sc.conf.isNeptuneManualSchedulingEnabled()) {
       // Resources are still used for manual paused tasks
-      if (executorIdToPausedTaskIds.size >= availableCpus.sum ) {
-        logInfo(s"Neptune: Manual scheduling ${executorIdToPausedTaskIds.size} Paused Tasks " +
+      if (executorIdToPausedTaskIds.values.flatten.sum >= availableCpus.sum ) {
+        logInfo(s"Neptune: Manual scheduling ${executorIdToPausedTaskIds.values.flatten.sum} Paused Tasks " +
           s"on ${availableCpus.sum} Cores")
         return false
       }
