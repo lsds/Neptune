@@ -88,28 +88,32 @@ private[spark] class LocalEndpoint(
 
     case PauseTask(taskId, interruptThread) =>
       if (executor.pauseTask(taskId, interruptThread)) {
-        freeCores += scheduler.CPUS_PER_TASK
-        executorBackend.executorDataMap.get(localExecutorId) match {
-          case Some(executorInfo) =>
-            executorInfo.freeCores += scheduler.CPUS_PER_TASK
-          case None =>
-            logWarning(s"Attempted to pause unknown executor ${localExecutorId}")
+        if (!scheduler.sc.conf.isNeptuneManualSchedulingEnabled()) {
+          freeCores += scheduler.CPUS_PER_TASK
+          executorBackend.executorDataMap.get(localExecutorId) match {
+            case Some(executorInfo) =>
+              executorInfo.freeCores += scheduler.CPUS_PER_TASK
+            case None =>
+              logWarning(s"Attempted to pause unknown executor ${localExecutorId}")
+          }
+          // fast-forward propagation
+          // at this point we might see more tasks running than in reality
+          // after the next PausedEvent propagation number gets back to normal
+          reviveOffers()
         }
-        // fast-forward propagation
-        // at this point we might see more tasks running than in reality
-        // after the next PausedEvent propagation number gets back to normal
-        reviveOffers()
       }
 
 
     case ResumeTask(taskId) =>
       if (executor.resumeTask(taskId)) {
-        freeCores -= scheduler.CPUS_PER_TASK
-        executorBackend.executorDataMap.get(localExecutorId) match {
-          case Some(executorInfo) =>
-            executorInfo.freeCores -= scheduler.CPUS_PER_TASK
-          case None =>
-            logWarning(s"Attempted to resume unknown executor ${localExecutorId}")
+        if (!scheduler.sc.conf.isNeptuneManualSchedulingEnabled()) {
+          freeCores -= scheduler.CPUS_PER_TASK
+          executorBackend.executorDataMap.get(localExecutorId) match {
+            case Some(executorInfo) =>
+              executorInfo.freeCores -= scheduler.CPUS_PER_TASK
+            case None =>
+              logWarning(s"Attempted to resume unknown executor ${localExecutorId}")
+          }
         }
       }
   }
