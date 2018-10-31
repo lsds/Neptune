@@ -462,8 +462,8 @@ private[spark] class TaskSchedulerImpl(
     val availableCpus = shuffledOffers.map(o => o.cores).toArray
     val sortedTaskSets = rootPool.getSortedTaskSetQueue
     for (taskSet <- sortedTaskSets) {
-      logInfo("[%s] [Tasks: %s] \n [Parent: %s] [NeptunePri: %s] [Running: %s] [Paused: %s] [Finished: %s]".format(
-        taskSet.name, taskSet.taskInfos.keys.toList, taskSet.parent.name, taskSet.neptunePriority,
+      logInfo("[%s] [Tasks #: %s] \n [Parent: %s] [NeptunePri: %s] [Running: %s] [Paused: %s] [Finished: %s]".format(
+        taskSet.name, taskSet.taskInfos.keys.size, taskSet.parent.name, taskSet.neptunePriority,
         taskSet.runningTasks, taskSet.pausedTasks, taskSet.tasksSuccessful))
       if (newExecAvail) {
         taskSet.executorAdded()
