@@ -937,7 +937,7 @@ class DAGScheduler(
     val stageAttemptId =
       stageIdToStage.get(task.stageId).map(_.latestInfo.attemptNumber).getOrElse(-1)
     val stage: Stage = stageIdToStage.get(task.stageId).get
-    listenerBus.post(SparkListenerTaskStart(task.stageId, stageAttemptId, taskInfo, stage.toString, stage.rdd.toString))
+    listenerBus.post(SparkListenerTaskStart(task.stageId, stageAttemptId, taskInfo, stage + "", stage.rdd + ""))
   }
 
   private[scheduler] def handlePauseEvent(task: Task[_], taskInfo: TaskInfo): Unit = {
