@@ -137,7 +137,7 @@ class FileScanRDD(
       /** Advances to the next file. Returns true if a new non-empty iterator is available. */
       private def nextIterator(): Boolean = {
         updateBytesReadWithFileSize()
-        if (files.hasNext) {
+        if (files.hasNext && !context.isPaused()) {
           currentFile = files.next()
           logInfo(s"Reading File $currentFile")
           // Sets InputFileBlockHolder for the file block's information

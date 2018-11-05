@@ -313,7 +313,7 @@ private[spark] class TaskSchedulerImpl(
   }
 
   override def pauseTaskAttempt(taskId: Long, interruptThread: Boolean): Boolean = {
-    logInfo(s"Pausing task $taskId")
+    logDebug(s"Pausing task $taskId")
     val execIdOpt = taskIdToExecutorId.get(taskId)
     if (execIdOpt.isDefined) {
       val execId = execIdOpt.get
@@ -330,7 +330,7 @@ private[spark] class TaskSchedulerImpl(
   }
 
   override def resumeTaskAttempt(taskId: Long): Boolean = {
-    logInfo(s"Resuming task ${taskId}")
+    logDebug(s"Resuming task ${taskId}")
     val execIdOpt = taskIdToExecutorId.get(taskId)
     if (execIdOpt.isDefined) {
       val execId = execIdOpt.get
