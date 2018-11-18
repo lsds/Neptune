@@ -183,8 +183,8 @@ private[spark] class LocalSchedulerBackend(
     launcherBackend.setAppId(appId)
     launcherBackend.setState(SparkAppHandle.State.RUNNING)
 
-    val data = new ExecutorData(localEndpoint, localEndpoint.address, executorEndpoint.localExecutorHostname,
-      totalCores, totalCores, Map.empty)
+    val data = new ExecutorData(localEndpoint, localEndpoint.address, executorEndpoint.localExecutorId,
+      executorEndpoint.localExecutorHostname, totalCores, totalCores, Map.empty)
     executorDataMap.put(executorEndpoint.localExecutorId, data)
   }
 
