@@ -183,9 +183,9 @@ private[spark] class TaskSchedulerImpl(
 
   override def submitTasks(taskSet: TaskSet) {
     val tasks = taskSet.tasks
-    logInfo("Adding task set " + taskSet.id + " with " + tasks.length + " tasks")
     this.synchronized {
       val manager = createTaskSetManager(taskSet, maxTaskFailures)
+      logInfo(s"Adding task set ${taskSet.id} with ${tasks.length} tasks => npri ${manager.neptunePriority}")
       val stage = taskSet.stageId
       val stageTaskSets =
         taskSetsByStageIdAndAttempt.getOrElseUpdate(stage, new HashMap[Int, TaskSetManager])
@@ -226,14 +226,14 @@ private[spark] class TaskSchedulerImpl(
        */
       // TODO: Check free Cores per Executor or in Total instead?
       val availableExecs = backend.getExecutorDataMap().filter(exec => exec._2.freeCores >= tasks.length)
-      logDebug(" === Current Executor state ===")
+      logDebug(" === Current Executor state START ===")
       for (exec <- backend.getExecutorDataMap().keys)
         logDebug(s"Executor: ${exec} freeCores: ${backend.getExecutorDataMap().get(exec).get.freeCores}" +
           s" totalCores: ${backend.getExecutorDataMap().get(exec).get.totalCores}")
-      logDebug(" === Current Executor state ===")
+      logDebug(" === Current Executor state END ===")
       // Not enough free resources
       if (sc.conf.isNeptuneCoroutinesEnabled() && manager.neptunePriority == 1 &&
-        (availableExecs.size == 0) && !executorIdToRunningTaskIds.isEmpty) {
+        !executorIdToRunningTaskIds.isEmpty) {
         def execWithEnoughLowPriTasks(executorId: String) : Boolean = {
           executorIdToRunningTaskIds.get(executorId).get.filter( taskId =>
             // Lower priority means more CRITICAL
@@ -242,7 +242,7 @@ private[spark] class TaskSchedulerImpl(
         }
         // Find executors with enough low-pri tasks we can pause
         val validExecs = backend.getExecutorDataMap().filterKeys(execWithEnoughLowPriTasks).keys
-        logInfo(s"Neptune found ${validExecs} Executors with [${tasks.length}] tasks to PAUSE")
+        logInfo(s"Neptune found ${validExecs} Executors with #${tasks.length} tasks to ${sc.conf.getNeptuneTaskPolicy()}")
         // Executor selection policy (random for now)
         if (!validExecs.isEmpty) {
           val firstExec = validExecs.head
@@ -371,6 +371,7 @@ private[spark] class TaskSchedulerImpl(
       availableCpus: Array[Int],
       tasks: IndexedSeq[ArrayBuffer[TaskDescription]]) : Boolean = {
 
+    logDebug(s"Offering to: ${taskSet.name} Npri ${taskSet.neptunePriority} Locality ${maxLocality}")
     // Neptune: Take care of paused tasks first
     if (sc.conf.isNeptuneCoroutinesEnabled() && !sc.conf.isNeptuneManualSchedulingEnabled()) {
       val availableExecIds = shuffledOffers.map(o => o.executorId).toArray
@@ -461,13 +462,8 @@ private[spark] class TaskSchedulerImpl(
     val tasks = shuffledOffers.map(o => new ArrayBuffer[TaskDescription](o.cores / CPUS_PER_TASK))
     val availableCpus = shuffledOffers.map(o => o.cores).toArray
     val sortedTaskSets = rootPool.getSortedTaskSetQueue
-    for (taskSet <- sortedTaskSets) {
-      logInfo("[%s] [Tasks #: %s] \n [Parent: %s] [NeptunePri: %s] [Running: %s] [Paused: %s] [Finished: %s]".format(
-        taskSet.name, taskSet.taskInfos.keys.size, taskSet.parent.name, taskSet.neptunePriority,
-        taskSet.runningTasks, taskSet.pausedTasks, taskSet.tasksSuccessful))
-      if (newExecAvail) {
-        taskSet.executorAdded()
-      }
+    if (newExecAvail) {
+      sortedTaskSets.foreach( ts => ts.executorAdded())
     }
 
     // Take each TaskSet in our scheduling order, and then offer it each node in increasing order
@@ -490,6 +486,15 @@ private[spark] class TaskSchedulerImpl(
 
     if (tasks.size > 0) {
       hasLaunchedTask = true
+    }
+    logInfo(" --- TaskQueue ---")
+    for (taskSet <- sortedTaskSets) {
+      logInfo("[%s] [Tasks #: %s] [Parent: %s] [NPri: %s] [Running: %s] [Paused: %s] [Finished: %s]".format(
+        taskSet.name, taskSet.taskInfos.keys.size, taskSet.parent.name, taskSet.neptunePriority,
+        taskSet.runningTasks, taskSet.pausedTasks, taskSet.tasksSuccessful))
+      if (newExecAvail) {
+        taskSet.executorAdded()
+      }
     }
     return tasks
   }
@@ -532,10 +537,17 @@ private[spark] class TaskSchedulerImpl(
             }
             // Neptune: notify that the Task has been paused
             if (TaskState.isPaused(state)) {
+              // keep executorTask mapping for the resume action
+              taskIdToExecutorId.get(tid).foreach { executorId =>
+                executorIdToRunningTaskIds.get(executorId).foreach { _.remove(tid) }
+              }
               taskSet.handlePausedTask(tid, serializedData)
             }
             // Neptune: notify that the Task has been resumed
             if (TaskState.isResumed(state)) {
+              taskIdToExecutorId.get(tid).foreach { executorId =>
+                executorIdToRunningTaskIds.get(executorId).foreach { _.add(tid) }
+              }
               taskSet.handleResumedTask(tid, serializedData)
             }
           case None =>
