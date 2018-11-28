@@ -267,7 +267,6 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     taskDescriptions = taskScheduler.resourceOffers(singleCoreWorkerOffer).flatten
   }
 
-
   test("Neptune 2 lowPri on 4 highPri (1 exec)") {
     // Schedule based on neptune_pri property
     val taskScheduler = setupNeptuneScheduler(executors = 1, coresPerExec = 4,
@@ -408,6 +407,64 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     assert(taskDescriptions(0).name.contains("stage 1.0"))
     // Total 8: 4 low-pri 4 high-pri
     assert(8 === taskScheduler.runningTasksByExecutors.values.sum)
+  }
+
+  test("Neptune CL policy 7 (4 to pause) lowPri on 4 highPri (2 exec)") {
+    val taskScheduler = setupNeptuneScheduler(executors = 2, coresPerExec = 4,
+      confs = "spark.scheduler.mode" -> SchedulingMode.NEPTUNE.toString, "spark.neptune.task.coroutines" -> "true",
+      "spark.neptune.scheduling.policy" -> "cl")
+    taskScheduler.start()
+    val executorCores = 4
+
+    val lowPriority: Properties = new Properties()
+    lowPriority.setProperty("neptune_pri", "2")
+    val taskSetLowPri = FakeTask.createTaskSet(numTasks = 7, stageId = 0, stageAttemptId = 0, props = lowPriority)
+
+    val highPriority: Properties = new Properties()
+    highPriority.setProperty("neptune_pri", "1")
+    val taskSetHighPri = FakeTask.createTaskSet(numTasks = 4, stageId = 1, stageAttemptId = 0, props = highPriority,
+      Seq(TaskLocation("host0", "executor0")), Seq(HostTaskLocation("host0")), Seq(HDFSCacheTaskLocation("host0")), Seq(TaskLocation("host0", "executor0")))
+
+    taskScheduler.submitTasks(taskSetLowPri)
+    val doubleWorkerOffer = IndexedSeq(new WorkerOffer("executor0", "host0", executorCores),
+      new WorkerOffer("executor1", "host1", executorCores-1)) // make sure executor1 has 1 core left
+    var taskDescriptions = taskScheduler.resourceOffers(doubleWorkerOffer).flatten
+
+    taskDescriptions.foreach { task =>
+      logInfo(s"Scheduled ${task.name} on ${task.executorId}")
+      val execData = FakeSchedulerBackend.executorDataMap.get(task.executorId).get
+      execData.freeCores -= 1
+      FakeSchedulerBackend.executorDataMap.put(task.executorId, execData)
+    }
+
+    assert(7 === taskDescriptions.length)
+    assert(taskDescriptions(0).name.contains("stage 0.0"))
+    assert(7 === taskScheduler.runningTasksByExecutors.values.sum)
+    assert(4 === taskScheduler.runningTasksByExecutors.get("executor0").get)
+    assert(3 === taskScheduler.runningTasksByExecutors.get("executor1").get)
+
+    taskScheduler.submitTasks(taskSetHighPri)
+    // Even through executor1 has free cores CL will pick executor0
+
+    taskScheduler.statusUpdate(0L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(2L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(4L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(6L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
+
+    // Offering to high-pri tasks
+    var singleCoreWorkerOffer = IndexedSeq(new WorkerOffer("executor1", "host1", 4))
+    taskDescriptions = taskScheduler.resourceOffers(singleCoreWorkerOffer).flatten
+    taskDescriptions.foreach { task => logInfo(s"Scheduled ${task.name} on ${task.executorId}") }
+    // We have locality preferences - nothing should be scheduled
+    assert(0 === taskDescriptions.length)
+
+    singleCoreWorkerOffer = IndexedSeq(new WorkerOffer("executor0", "host0", 4))
+    taskDescriptions = taskScheduler.resourceOffers(singleCoreWorkerOffer).flatten
+    taskDescriptions.foreach { task => logInfo(s"Scheduled ${task.name} on ${task.executorId}") }
+    // Now locality is satisfied
+    assert(4 === taskDescriptions.length)
+    // Total 7: 3 low-pri 4 high-pri with cache locality
+    assert(7 === taskScheduler.runningTasksByExecutors.values.sum)
   }
 
   test("Scheduler correctly accounts for multiple CPUs per task") {
