@@ -444,6 +444,22 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
     }
   }
 
+  def setNeptuneSchedulingPolicy(schedulingPolicy: String): Unit = {
+    set("spark.neptune.scheduling.policy", schedulingPolicy)
+  }
+
+  def getNeptuneSchedulingPolicy(): NeptunePolicy.NeptunePolicy = {
+    getOption("spark.neptune.scheduling.policy") match {
+      case Some("random") => NeptunePolicy.RANDOM
+      case Some("r") => NeptunePolicy.RANDOM
+      case Some("load_balance") => NeptunePolicy.LOAD_BALANCE
+      case Some("lb") => NeptunePolicy.LOAD_BALANCE
+      case Some("cache_local") => NeptunePolicy.CACHE_LOCAL
+      case Some("cl") => NeptunePolicy.CACHE_LOCAL
+      case _ => NeptunePolicy.LOAD_BALANCE
+    }
+  }
+
   def setNeptuneTaskPolicy(taskPolicy: String): Unit = {
     set("spark.neptune.task.policy", taskPolicy)
   }
