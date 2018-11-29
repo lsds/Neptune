@@ -270,7 +270,7 @@ private[spark] class TaskSchedulerImpl(
                     case TaskState.KILLED =>
                       if (killTaskAttempt(tid, false, "")) availableCores += 1
                   }
-                  logDebug(s"Neptune R PreemptExec: ${curExecutor.executorId} TID: ${tid} " +
+                  logInfo(s"Neptune R PreemptExec: ${curExecutor.executorId} TID: ${tid} " +
                     s"free cores: (${curExecutor.freeCores}) releasedCores: (${availableCores})")
                 }
             }
@@ -313,7 +313,7 @@ private[spark] class TaskSchedulerImpl(
                   case TaskState.KILLED =>
                     if (killTaskAttempt(tid, false, "")) availableCores += 1
                 }
-                logDebug(s"Neptune LB PreemptExec: ${curExecutor.executorId} TID: ${tid} free cores:" +
+                logInfo(s"Neptune LB PreemptExec: ${curExecutor.executorId} TID: ${tid} free cores:" +
                   s" (${curExecutor.freeCores}) releasedCores: (${availableCores})")
               }
             }
@@ -340,15 +340,25 @@ private[spark] class TaskSchedulerImpl(
       s"[${validExecs.map(e => e.totalCores - e.freeCores).mkString(",")}] to be: ${neptuneTaskPolicy}")
 
     // TaskLocation can be one of the categories below
-    val taskExecPrefs = manager.tasks.map(_.preferredLocations.map {
-      _ match {
-        case tl: ExecutorCacheTaskLocation => tl.executorId
-        case tl: HostTaskLocation => hostToExecutors.get(tl.host).get.head
-        case tl: HDFSCacheTaskLocation => hostToExecutors.get(tl.host).get.head
-        case _ => validExecs.head.executorId
+    var foundCachePrefs = false
+    val taskExecPrefs = manager.tasks.map(task =>
+      if (task.preferredLocations == Nil) {
+        validExecs.head.executorId
+      } else {
+        task.preferredLocations.head match {
+          case tl: ExecutorCacheTaskLocation =>
+            foundCachePrefs = true
+            tl.executorId
+          case tl: HostTaskLocation =>
+            foundCachePrefs = true
+            hostToExecutors.get(tl.host).get.head
+          case tl: HDFSCacheTaskLocation =>
+            foundCachePrefs = true
+            hostToExecutors.get(tl.host).get.head
+          case _ => validExecs.head.executorId
+        }
       }
-    }).flatten
-
+    )
     if (!taskExecPrefs.isEmpty) {
       // Executor selection policy: CACHE_LOCAL
       var availableCores = 0
@@ -364,9 +374,9 @@ private[spark] class TaskSchedulerImpl(
                   case TaskState.KILLED =>
                     if (killTaskAttempt(tid, false, "")) availableCores += 1
                 }
-                logDebug(s"Neptune CL PreemptExec: ${executorId} TID: ${tid} free cores:" +
+                logInfo(s"Neptune CL PreemptExec: ${executorId} TID: ${tid} free cores:" +
                   s" (${backend.getExecutorDataMap().get(executorId).get.freeCores})" +
-                  s" releasedCores: (${availableCores})")
+                  s" releasedCores: (${availableCores}) cachePrefs: ${foundCachePrefs}")
               }
             }
           }
@@ -475,7 +485,6 @@ private[spark] class TaskSchedulerImpl(
       availableCpus: Array[Int],
       tasks: IndexedSeq[ArrayBuffer[TaskDescription]]) : Boolean = {
 
-    logDebug(s"Offering to: ${taskSet.name} Npri ${taskSet.neptunePriority} Locality ${maxLocality}")
     // Neptune: Take care of paused tasks first
     if (sc.conf.isNeptuneCoroutinesEnabled() && !sc.conf.isNeptuneManualSchedulingEnabled()) {
       val availableExecIds = shuffledOffers.map(o => o.executorId).toArray
