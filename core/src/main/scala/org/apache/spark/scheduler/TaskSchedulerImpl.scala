@@ -485,23 +485,6 @@ private[spark] class TaskSchedulerImpl(
       availableCpus: Array[Int],
       tasks: IndexedSeq[ArrayBuffer[TaskDescription]]) : Boolean = {
 
-    // Neptune: Take care of paused tasks first
-    if (sc.conf.isNeptuneCoroutinesEnabled() && !sc.conf.isNeptuneManualSchedulingEnabled()) {
-      val availableExecIds = shuffledOffers.map(o => o.executorId).toArray
-      for (tid: Long <- taskSet.pausedTasksSet) {
-        val execId = taskIdToExecutorId(tid)
-        val execIndex = availableExecIds.indexOf(execId)
-        if (execIndex != -1 && availableCpus(execIndex) > 0 && availableExecIds.contains(execId)) {
-          if (resumeTaskAttempt(tid)) {
-            // fast resume-event propagation
-            //  taskSet.handleResumedTask(tid)
-            availableCpus(execIndex) -= CPUS_PER_TASK
-          }
-        }
-      }
-    }
-
-
     var launchedTask = false
     // nodes and executors that are blacklisted for the entire application have already been
     // filtered out by this point
@@ -510,6 +493,20 @@ private[spark] class TaskSchedulerImpl(
       val host = shuffledOffers(i).host
       if (availableCpus(i) >= CPUS_PER_TASK) {
         try {
+          // Neptune: prioritize paused tasks of the current stage
+          if (!sc.conf.isNeptuneManualSchedulingEnabled()) {
+            for (tid: Long <- taskSet.pausedTasksSet) {
+              if (taskIdToExecutorId(tid) == execId) {
+                if (resumeTaskAttempt(tid)) {
+                  // fast resume-event propagation
+                  //  taskSet.handleResumedTask(tid)
+                  availableCpus(i) -= CPUS_PER_TASK
+                  assert(availableCpus(i) >= 0)
+                  launchedTask = true
+                }
+              }
+            }
+          }
           for (task <- taskSet.resourceOffer(execId, host, maxLocality)) {
             tasks(i) += task
             val tid = task.taskId
