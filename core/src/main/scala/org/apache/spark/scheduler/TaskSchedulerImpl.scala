@@ -491,22 +491,22 @@ private[spark] class TaskSchedulerImpl(
     for (i <- 0 until shuffledOffers.size) {
       val execId = shuffledOffers(i).executorId
       val host = shuffledOffers(i).host
-      if (availableCpus(i) >= CPUS_PER_TASK) {
-        try {
-          // Neptune: prioritize paused tasks of the current stage
-          if (!sc.conf.isNeptuneManualSchedulingEnabled()) {
-            for (tid: Long <- taskSet.pausedTasksSet) {
-              if (taskIdToExecutorId(tid) == execId) {
-                if (resumeTaskAttempt(tid)) {
-                  // fast resume-event propagation
-                  //  taskSet.handleResumedTask(tid)
-                  availableCpus(i) -= CPUS_PER_TASK
-                  assert(availableCpus(i) >= 0)
-                  launchedTask = true
-                }
+      try {
+        // Neptune: prioritize paused tasks of the current stage
+        if (!sc.conf.isNeptuneManualSchedulingEnabled() && (availableCpus(i) >= CPUS_PER_TASK)) {
+          for (tid: Long <- taskSet.pausedTasksSet) {
+            if (taskIdToExecutorId(tid) == execId) {
+              if (resumeTaskAttempt(tid)) {
+                // fast resume-event propagation
+                // taskSet.handleResumedTask(tid)
+                availableCpus(i) -= CPUS_PER_TASK
+                assert(availableCpus(i) >= 0)
+                launchedTask = true
               }
             }
           }
+        }
+        if (availableCpus(i) >= CPUS_PER_TASK) {
           for (task <- taskSet.resourceOffer(execId, host, maxLocality)) {
             tasks(i) += task
             val tid = task.taskId
@@ -517,13 +517,13 @@ private[spark] class TaskSchedulerImpl(
             assert(availableCpus(i) >= 0)
             launchedTask = true
           }
-        } catch {
-          case e: TaskNotSerializableException =>
-            logError(s"Resource offer failed, task set ${taskSet.name} was not serializable")
-            // Do not offer resources for this task, but don't throw an error to allow other
-            // task sets to be submitted.
-            return launchedTask
         }
+      } catch {
+        case e: TaskNotSerializableException =>
+          logError(s"Resource offer failed, task set ${taskSet.name} was not serializable")
+          // Do not offer resources for this task, but don't throw an error to allow other
+          // task sets to be submitted.
+          return launchedTask
       }
     }
     return launchedTask

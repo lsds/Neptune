@@ -467,6 +467,79 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     assert(7 === taskScheduler.runningTasksByExecutors.values.sum)
   }
 
+  test("Neptune Resume policy 12 Low-Pri tasks 4 High-Pri tasks (1 exec)") {
+    val taskScheduler = setupNeptuneScheduler(executors = 1, coresPerExec = 4,
+      confs = "spark.scheduler.mode" -> SchedulingMode.NEPTUNE.toString, "spark.neptune.task.coroutines" -> "true",
+      "spark.neptune.scheduling.policy" -> "cl")
+    taskScheduler.start()
+    val executorCores = 4
+
+    val lowPriority: Properties = new Properties()
+    lowPriority.setProperty("neptune_pri", "2")
+    val taskSetLowPri = FakeTask.createTaskSet(numTasks = 12, stageId = 0, stageAttemptId = 0, props = lowPriority)
+
+    val highPriority: Properties = new Properties()
+    highPriority.setProperty("neptune_pri", "1")
+    val taskSetHighPri = FakeTask.createTaskSet(numTasks = 4, stageId = 1, stageAttemptId = 0, props = highPriority)
+
+    taskScheduler.submitTasks(taskSetLowPri)
+    val doubleWorkerOffer = IndexedSeq(new WorkerOffer("executor0", "host0", executorCores))
+    var taskDescriptions = taskScheduler.resourceOffers(doubleWorkerOffer).flatten
+
+    taskDescriptions.foreach { task =>
+      logInfo(s"Scheduled ${task.name} on ${task.executorId}")
+      val execData = FakeSchedulerBackend.executorDataMap.get(task.executorId).get
+      execData.freeCores -= 1
+      FakeSchedulerBackend.executorDataMap.put(task.executorId, execData)
+    }
+
+    assert(4 === taskDescriptions.length)
+    assert(taskDescriptions(0).name.contains("stage 0.0"))
+    assert(4 === taskScheduler.runningTasksByExecutors.values.sum)
+    assert(4 === taskScheduler.runningTasksByExecutors.get("executor0").get)
+
+    taskScheduler.submitTasks(taskSetHighPri)
+
+    taskScheduler.statusUpdate(0L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(1L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(2L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(3L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
+
+    // Offering to high-pri tasks
+    var singleCoreWorkerOffer = IndexedSeq(new WorkerOffer("executor0", "host0", 4))
+    taskDescriptions = taskScheduler.resourceOffers(singleCoreWorkerOffer).flatten
+    taskDescriptions.foreach { task => logInfo(s"Scheduled ${task.name} on ${task.executorId}") }
+    // Schedule high pri tasks
+    assert(4 === taskDescriptions.length)
+
+    taskScheduler.statusUpdate(4L, TaskState.FINISHED, sc.env.closureSerializer.newInstance().serialize(new DirectTaskResult[Int](sc.env.closureSerializer.newInstance().serialize(4L), Seq())))
+    taskScheduler.statusUpdate(5L, TaskState.FINISHED, sc.env.closureSerializer.newInstance().serialize(new DirectTaskResult[Int](sc.env.closureSerializer.newInstance().serialize(5L), Seq())))
+    taskScheduler.statusUpdate(6L, TaskState.FINISHED, sc.env.closureSerializer.newInstance().serialize(new DirectTaskResult[Int](sc.env.closureSerializer.newInstance().serialize(6L), Seq())))
+    taskScheduler.statusUpdate(7L, TaskState.FINISHED, sc.env.closureSerializer.newInstance().serialize(new DirectTaskResult[Int](sc.env.closureSerializer.newInstance().serialize(7L), Seq())))
+
+    taskDescriptions = taskScheduler.resourceOffers(singleCoreWorkerOffer).flatten
+    taskDescriptions.foreach { task => logInfo(s"Scheduled ${task.name} on ${task.executorId}") }
+
+    taskScheduler.statusUpdate(0L, TaskState.RESUMED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(1L, TaskState.RESUMED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(2L, TaskState.RESUMED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(3L, TaskState.RESUMED, sc.env.closureSerializer.newInstance().serialize(0.0))
+
+    taskDescriptions = taskScheduler.resourceOffers(IndexedSeq(new WorkerOffer("executor0", "host0", 0))).flatten
+    // 4 low-pri 0 high-pri
+    assert(4 === taskScheduler.runningTasksByExecutors.values.sum)
+
+    // Start the rest low-pri
+    taskScheduler.statusUpdate(0L, TaskState.FINISHED, sc.env.closureSerializer.newInstance().serialize(new DirectTaskResult[Int](sc.env.closureSerializer.newInstance().serialize(0L), Seq())))
+    taskScheduler.statusUpdate(1L, TaskState.FINISHED, sc.env.closureSerializer.newInstance().serialize(new DirectTaskResult[Int](sc.env.closureSerializer.newInstance().serialize(1L), Seq())))
+    taskScheduler.statusUpdate(2L, TaskState.FINISHED, sc.env.closureSerializer.newInstance().serialize(new DirectTaskResult[Int](sc.env.closureSerializer.newInstance().serialize(2L), Seq())))
+    taskScheduler.statusUpdate(3L, TaskState.FINISHED, sc.env.closureSerializer.newInstance().serialize(new DirectTaskResult[Int](sc.env.closureSerializer.newInstance().serialize(3L), Seq())))
+
+    taskDescriptions = taskScheduler.resourceOffers(singleCoreWorkerOffer).flatten
+    taskDescriptions.foreach { task => logInfo(s"Scheduled ${task.name} on ${task.executorId}") }
+    assert(4 === taskScheduler.runningTasksByExecutors.values.sum)
+  }
+
   test("Scheduler correctly accounts for multiple CPUs per task") {
     val taskCpus = 2
     val taskScheduler = setupScheduler("spark.task.cpus" -> taskCpus.toString)
