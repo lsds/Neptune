@@ -795,7 +795,6 @@ private[spark] class TaskSetManager(
     info.resumeLatency = SparkEnv.get.serializer.newInstance().deserialize(serializedData)
     addRunningTask(tid)
     removePausedTask(tid)
-    // Add to runningSet is done in the resourceOffer method
     sched.dagScheduler.taskResumed(tasks(index), info)
   }
 

@@ -218,18 +218,13 @@ private[spark] class TaskSchedulerImpl(
 
       backend.reviveOffers()
 
-//      logDebug(" === Current Executor state START ===")
-//      for (exec <- backend.getExecutorDataMap().keys)
-//        logDebug(s"Executor: ${exec} freeCores: ${backend.getExecutorDataMap().get(exec).get.freeCores}" +
-//          s" totalCores: ${backend.getExecutorDataMap().get(exec).get.totalCores}")
-//      logDebug(" === Current Executor state END ===")
       if (sc.conf.isNeptuneCoroutinesEnabled() && manager.neptunePriority == 1 && !executorIdToRunningTaskIds.isEmpty) {
         sc.conf.getNeptuneSchedulingPolicy() match {
           case NeptunePolicy.RANDOM => neptuneRandomPolicy(manager)
           case NeptunePolicy.LOAD_BALANCE => neptuneLBPolicy(manager)
           case NeptunePolicy.CACHE_LOCAL => neptuneCLPolicy(manager)
         }
-        // Avoid Triggering another offer - now done in LocalSchedulerBackend PauseEvent
+        // Avoid Triggering another offer - now done in SchedulerBackends PausedEvent
         return
       }
     }
@@ -266,7 +261,11 @@ private[spark] class TaskSchedulerImpl(
                   (taskIdToTaskSetManager(tid).neptunePriority > manager.neptunePriority)) {
                   sc.conf.getNeptuneTaskPolicy() match {
                     case TaskState.PAUSED =>
-                      if (pauseTaskAttempt(tid, false)) availableCores += 1
+                      if (pauseTaskAttempt(tid, false)) {
+                        taskIdToTaskSetManager(tid).addPausedTask(tid)
+                        taskIdToTaskSetManager(tid).removeRunningTask(tid)
+                        availableCores += 1
+                      }
                     case TaskState.KILLED =>
                       if (killTaskAttempt(tid, false, "")) availableCores += 1
                   }
@@ -309,7 +308,11 @@ private[spark] class TaskSchedulerImpl(
                 (taskIdToTaskSetManager(tid).neptunePriority > manager.neptunePriority)) {
                 sc.conf.getNeptuneTaskPolicy() match {
                   case TaskState.PAUSED =>
-                    if (pauseTaskAttempt(tid, false)) availableCores += 1
+                    if (pauseTaskAttempt(tid, false)) {
+                      taskIdToTaskSetManager(tid).addPausedTask(tid)
+                      taskIdToTaskSetManager(tid).removeRunningTask(tid)
+                      availableCores += 1
+                    }
                   case TaskState.KILLED =>
                     if (killTaskAttempt(tid, false, "")) availableCores += 1
                 }
@@ -370,7 +373,11 @@ private[spark] class TaskSchedulerImpl(
                 (taskIdToTaskSetManager(tid).neptunePriority > manager.neptunePriority)) {
                 sc.conf.getNeptuneTaskPolicy() match {
                   case TaskState.PAUSED =>
-                    if (pauseTaskAttempt(tid, false)) availableCores += 1
+                    if (pauseTaskAttempt(tid, false)) {
+                      taskIdToTaskSetManager(tid).addPausedTask(tid)
+                      taskIdToTaskSetManager(tid).removeRunningTask(tid)
+                      availableCores += 1
+                    }
                   case TaskState.KILLED =>
                     if (killTaskAttempt(tid, false, "")) availableCores += 1
                 }
@@ -450,8 +457,6 @@ private[spark] class TaskSchedulerImpl(
       val execId = execIdOpt.get
       if (executorIdToPausedTaskIds.contains(execId)) {
         executorIdToPausedTaskIds(execId).remove(taskId)
-        // fast resume-event propagation
-        // taskIdToTaskSetManager(taskId).handleResumedTask(taskId)
         backend.resumeTask(taskId, execId)
         return true
       }
@@ -498,7 +503,8 @@ private[spark] class TaskSchedulerImpl(
             if ((availableCpus(i) >= CPUS_PER_TASK) && (taskIdToExecutorId(tid) == execId)) {
               if (resumeTaskAttempt(tid)) {
                 // fast resume-event propagation
-                // taskSet.handleResumedTask(tid)
+                taskSet.addRunningTask(tid)
+                taskSet.removePausedTask(tid)
                 availableCpus(i) -= CPUS_PER_TASK
                 assert(availableCpus(i) >= 0)
                 launchedTask = true
@@ -586,8 +592,7 @@ private[spark] class TaskSchedulerImpl(
         do {
           launchedTaskAtCurrentMaxLocality = resourceOfferSingleTaskSet(
             taskSet, currentMaxLocality, shuffledOffers, availableCpus, tasks)
-          launchedAnyTask |= launchedTaskAtCurrentMaxLocality
-        } while (launchedTaskAtCurrentMaxLocality)
+          launchedAnyTask |= launchedTaskAtCurrentMaxLocality        } while (launchedTaskAtCurrentMaxLocality)
       }
       if (!launchedAnyTask) {
         taskSet.abortIfCompletelyBlacklisted(hostToExecutors)
