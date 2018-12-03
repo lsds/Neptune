@@ -495,7 +495,7 @@ private[spark] class TaskSchedulerImpl(
         // Neptune: prioritize paused tasks of the current stage
         if (!sc.conf.isNeptuneManualSchedulingEnabled() && (availableCpus(i) >= CPUS_PER_TASK)) {
           for (tid: Long <- taskSet.pausedTasksSet) {
-            if (taskIdToExecutorId(tid) == execId) {
+            if ((availableCpus(i) >= CPUS_PER_TASK) && (taskIdToExecutorId(tid) == execId)) {
               if (resumeTaskAttempt(tid)) {
                 // fast resume-event propagation
                 // taskSet.handleResumedTask(tid)
