@@ -362,6 +362,8 @@ private[spark] class TaskSchedulerImpl(
         }
       }
     )
+    logInfo(s"Neptune Tasks: ${manager.tasks.length} PrefLocations ${taskExecPrefs}")
+
     if (!taskExecPrefs.isEmpty) {
       // Executor selection policy: CACHE_LOCAL
       var availableCores = 0
@@ -369,7 +371,8 @@ private[spark] class TaskSchedulerImpl(
         if (availableCores < manager.tasks.length) {
           executorIdToRunningTaskIds.get(executorId).foreach {
             _.foreach { tid =>
-              if ((!executorIdToPausedTaskIds(executorId).contains(tid)) &&
+              if ((availableCores < manager.tasks.length) &&
+                (!executorIdToPausedTaskIds(executorId).contains(tid)) &&
                 (taskIdToTaskSetManager(tid).neptunePriority > manager.neptunePriority)) {
                 sc.conf.getNeptuneTaskPolicy() match {
                   case TaskState.PAUSED =>
