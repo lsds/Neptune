@@ -362,7 +362,7 @@ private[spark] class TaskSchedulerImpl(
         }
       }
     )
-    logInfo(s"Neptune Tasks: ${manager.tasks.length} PrefLocations ${taskExecPrefs}")
+    logInfo(s"Neptune Tasks: ${manager.tasks.length} PrefLocations ${taskExecPrefs.mkString(",")}")
 
     if (!taskExecPrefs.isEmpty) {
       // Executor selection policy: CACHE_LOCAL
