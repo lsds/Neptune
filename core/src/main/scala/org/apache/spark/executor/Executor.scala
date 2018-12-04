@@ -247,7 +247,10 @@ private[spark] class Executor(
         logInfo(s"To Resume TID ${taskId} taskRunner ${tr}")
         resumeStart = System.nanoTime()
         runningTasks.put(taskId, tr)
-        threadPool.execute(tr)
+        // If the coTask did not yield a value do not re-execute
+        if (tr.task.context.getcoInstance().hasValue) {
+          threadPool.execute(tr)
+        }
         return true
       }
       else {
