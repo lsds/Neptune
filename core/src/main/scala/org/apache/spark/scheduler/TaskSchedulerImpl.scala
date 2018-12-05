@@ -342,7 +342,7 @@ private[spark] class TaskSchedulerImpl(
     val validExecs: Seq[ExecutorData] = backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).
       values.toSeq.sortWith(_.freeCores > _.freeCores)
     val execStack = Stack[String]()
-    validExecs.foreach(exec => (0 to exec.freeCores).foreach(execStack.push(exec.executorId)))
+    validExecs.foreach(exec => for (i <- 0 to exec.freeCores) {execStack.push(exec.executorId)})
 
     logDebug(s"Neptune Stack ${execStack.mkString(",")} Executors: ${validExecs.map(_.executorId).mkString(",")} " +
       s"with LowPri-Tasks: [${validExecs.map(e => e.totalCores - e.freeCores).mkString(",")}] to be: ${neptuneTaskPolicy}")
