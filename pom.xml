@@ -402,7 +402,7 @@
       <!-- End of shaded deps -->
       <!--Neptune deps -->
       <dependency>
-        <groupId>uk.ac.uk</groupId>
+        <groupId>uk.ac.ic</groupId>
         <artifactId>coroutines_2.11</artifactId>
         <version>0.8-SNAPSHOT</version>
       </dependency>
