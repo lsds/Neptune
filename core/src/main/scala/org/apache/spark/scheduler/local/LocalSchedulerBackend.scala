@@ -76,7 +76,10 @@ private[spark] class LocalEndpoint(
         freeCores += scheduler.CPUS_PER_TASK
         executorBackend.executorDataMap.get(localExecutorId) match {
           case Some(executorInfo) =>
-            executorInfo.freeCores += scheduler.CPUS_PER_TASK
+            // Avoid corner case where task transitions from PAUSED to FINISHED
+            if (!scheduler.pausedTaskIds.contains(taskId)) {
+              executorInfo.freeCores += scheduler.CPUS_PER_TASK
+            }
           case None =>
             logWarning(s"Attempted to update unknown executor ${localExecutorId}")
         }

@@ -123,8 +123,11 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
         if (TaskState.isFinished(state)) {
           executorDataMap.get(executorId) match {
             case Some(executorInfo) =>
-              executorInfo.freeCores += scheduler.CPUS_PER_TASK
-              makeOffers(executorId)
+              // Avoid corner case where task transitions from PAUSED to FINISHED
+              if (!scheduler.pausedTaskIds.contains(taskId)) {
+                  executorInfo.freeCores += scheduler.CPUS_PER_TASK
+                  makeOffers(executorId)
+              }
             case None =>
               // Ignoring the update since we don't know about the executor.
               logWarning(s"Ignored task status update ($taskId state $state) " +
@@ -162,9 +165,6 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
         executorDataMap.get(executorId) match {
           case Some(executorInfo) =>
             executorInfo.executorEndpoint.send(ResumeTask(taskId, executorId))
-            if (!scheduler.sc.conf.isNeptuneManualSchedulingEnabled()) {
-              executorInfo.freeCores -= scheduler.CPUS_PER_TASK
-            }
           case None =>
             // Ignoring the task RESUME Event since the executor is not registered.
             logWarning(s"Attempted to resume task $taskId for unknown executor $executorId.")
@@ -484,6 +484,14 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
 
   override def resumeTask(
      taskId: Long, executorId: String): Unit = {
+    CoarseGrainedSchedulerBackend.this.synchronized {
+      executorDataMap.get(executorId) match {
+        case Some(executorInfo) =>
+          if (!scheduler.sc.conf.isNeptuneManualSchedulingEnabled()) {
+            executorInfo.freeCores -= scheduler.CPUS_PER_TASK
+          }
+      }
+    }
     driverEndpoint.send((ResumeTask(taskId, executorId)))
   }
 

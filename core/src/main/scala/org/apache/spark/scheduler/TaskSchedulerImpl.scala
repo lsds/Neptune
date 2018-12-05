@@ -32,7 +32,7 @@ import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.{AccumulatorV2, ThreadUtils, Utils}
 
 import scala.collection.Set
-import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
+import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet, Stack}
 import scala.util.Random
 
 /**
@@ -102,6 +102,10 @@ private[spark] class TaskSchedulerImpl(
 
   // IDs of the tasks paused on each executor
   private val executorIdToPausedTaskIds = new HashMap[String, HashSet[Long]]
+
+  def pausedTaskIds: Set[Long] = synchronized {
+    executorIdToPausedTaskIds.values.flatten.toSet
+  }
 
   // IDs of the tasks running on each executor
   private val executorIdToRunningTaskIds = new HashMap[String, HashSet[Long]]
@@ -215,9 +219,6 @@ private[spark] class TaskSchedulerImpl(
       }
       hasReceivedTask = true
 
-
-      backend.reviveOffers()
-
       if (sc.conf.isNeptuneCoroutinesEnabled() && manager.neptunePriority == 1 && !executorIdToRunningTaskIds.isEmpty) {
         sc.conf.getNeptuneSchedulingPolicy() match {
           case NeptunePolicy.RANDOM => neptuneRandomPolicy(manager)
@@ -245,7 +246,7 @@ private[spark] class TaskSchedulerImpl(
 
     // Find executors with low-pri tasks we can pause (descending order)
     val validExecs: Seq[ExecutorData] = r.shuffle(backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).values.toSeq)
-    logInfo(s"Neptune Executors: ${validExecs.map(_.executorId).mkString(",")} with LowPri-Tasks: " +
+    logDebug(s"Neptune Executors: ${validExecs.map(_.executorId).mkString(",")} with LowPri-Tasks: " +
       s"[${validExecs.map(e => e.totalCores - e.freeCores).mkString(",")}] to be: ${neptuneTaskPolicy}")
 
     if (!validExecs.isEmpty) {
@@ -292,7 +293,7 @@ private[spark] class TaskSchedulerImpl(
 
     // Find executors with low-pri tasks we can pause (descending order)
     val validExecs: Seq[ExecutorData] = backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).values.toSeq.sortWith(_.freeCores > _.freeCores)
-    logInfo(s"Neptune Executors: ${validExecs.map(_.executorId).mkString(",")} with LowPri-Tasks: " +
+    logDebug(s"Neptune Executors: ${validExecs.map(_.executorId).mkString(",")} with LowPri-Tasks: " +
       s"[${validExecs.map(e => e.totalCores - e.freeCores).mkString(",")}] to be: ${neptuneTaskPolicy}")
 
     if (!validExecs.isEmpty) {
@@ -338,9 +339,13 @@ private[spark] class TaskSchedulerImpl(
     }
 
     // Find executors with low-pri tasks we can pause (descending order)
-    val validExecs: Seq[ExecutorData] = backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).values.toSeq.sortWith(_.freeCores > _.freeCores)
-    logInfo(s"Neptune Executors: ${validExecs.map(_.executorId).mkString(",")} with LowPri-Tasks: " +
-      s"[${validExecs.map(e => e.totalCores - e.freeCores).mkString(",")}] to be: ${neptuneTaskPolicy}")
+    val validExecs: Seq[ExecutorData] = backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).
+      values.toSeq.sortWith(_.freeCores > _.freeCores)
+    val execStack = Stack[String]()
+    validExecs.foreach(exec => (0 to exec.freeCores).foreach(execStack.push(exec.executorId)))
+
+    logDebug(s"Neptune Stack ${execStack.mkString(",")} Executors: ${validExecs.map(_.executorId).mkString(",")} " +
+      s"with LowPri-Tasks: [${validExecs.map(e => e.totalCores - e.freeCores).mkString(",")}] to be: ${neptuneTaskPolicy}")
 
     // TaskLocation can be one of the categories below
     var foundCachePrefs = false
@@ -358,7 +363,7 @@ private[spark] class TaskSchedulerImpl(
           case tl: HDFSCacheTaskLocation =>
             foundCachePrefs = true
             hostToExecutors.get(tl.host).get.head
-          case _ => validExecs.head.executorId
+          case _ => if (!execStack.isEmpty) execStack.pop() else validExecs.head.executorId
         }
       }
     )
@@ -607,9 +612,9 @@ private[spark] class TaskSchedulerImpl(
     }
     logInfo(" --- TaskQueue ---")
     for (taskSet <- sortedTaskSets) {
-      logInfo("[%s] [Tasks #: %s] [Parent: %s] [NPri: %s] [Running: %s] [Paused: %s] [Finished: %s]".format(
+      logInfo("[%s] [Tasks #: %s] [Parent: %s] [NPri: %s] [Running: %s](%s) [Paused: %s](%s) [Finished: %s]".format(
         taskSet.name, taskSet.taskInfos.keys.size, taskSet.parent.name, taskSet.neptunePriority,
-        taskSet.runningTasks, taskSet.pausedTasks, taskSet.tasksSuccessful))
+        taskSet.runningTasks, taskSet.runningTasksSet, taskSet.pausedTasks, taskSet.pausedTasksSet, taskSet.tasksSuccessful))
       if (newExecAvail) {
         taskSet.executorAdded()
       }
@@ -647,6 +652,8 @@ private[spark] class TaskSchedulerImpl(
             if (TaskState.isFinished(state)) {
               cleanupTaskState(tid)
               taskSet.removeRunningTask(tid)
+              // Corner case where task finished before yielding
+              taskSet.removePausedTask(tid)
               if (state == TaskState.FINISHED) {
                 taskResultGetter.enqueueSuccessfulTask(taskSet, tid, serializedData)
               } else if (Set(TaskState.FAILED, TaskState.KILLED, TaskState.LOST).contains(state)) {
