@@ -224,6 +224,7 @@ private[spark] class TaskSchedulerImpl(
           case NeptunePolicy.RANDOM => neptuneRandomPolicy(manager)
           case NeptunePolicy.LOAD_BALANCE => neptuneLBPolicy(manager)
           case NeptunePolicy.CACHE_LOCAL => neptuneCLPolicy(manager)
+          case NeptunePolicy.CACHE_LOCAL_BALANCE => neptuneCLBPolicy(manager)
         }
         // Avoid Triggering another offer - now done in SchedulerBackends PausedEvent
         return
@@ -244,10 +245,9 @@ private[spark] class TaskSchedulerImpl(
       ).size >= 0
     }
 
-    // Find executors with low-pri tasks we can pause (descending order)
+    // Find executors with low-pri tasks we can pause (random order)
     val validExecs: Seq[ExecutorData] = r.shuffle(backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).values.toSeq)
-    logDebug(s"Neptune Executors: ${validExecs.map(_.executorId).mkString(",")} with LowPri-Tasks: " +
-      s"[${validExecs.map(e => e.totalCores - e.freeCores).mkString(",")}] to be: ${neptuneTaskPolicy}")
+    logInfo(s"Neptune R found [${validExecs.size}] Executors with LowPri-Tasks to be: ${neptuneTaskPolicy}")
 
     if (!validExecs.isEmpty) {
       // Executor selection policy: RANDOM
@@ -270,7 +270,7 @@ private[spark] class TaskSchedulerImpl(
                     case TaskState.KILLED =>
                       if (killTaskAttempt(tid, false, "")) availableCores += 1
                   }
-                  logInfo(s"Neptune R PreemptExec: ${curExecutor.executorId} TID: ${tid} " +
+                  logDebug(s"Neptune R PreemptExec: ${curExecutor.executorId} TID: ${tid} " +
                     s"free cores: (${curExecutor.freeCores}) releasedCores: (${availableCores})")
                 }
             }
@@ -278,7 +278,7 @@ private[spark] class TaskSchedulerImpl(
         }
       }
     } else {
-      logWarning(s"Neptune Random: No Valid Executors found to ${neptuneTaskPolicy} tasks!")
+      logWarning(s"Neptune R: No Valid Executors found to ${neptuneTaskPolicy} tasks!")
     }
   }
 
@@ -293,8 +293,7 @@ private[spark] class TaskSchedulerImpl(
 
     // Find executors with low-pri tasks we can pause (descending order)
     val validExecs: Seq[ExecutorData] = backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).values.toSeq.sortWith(_.freeCores > _.freeCores)
-    logDebug(s"Neptune Executors: ${validExecs.map(_.executorId).mkString(",")} with LowPri-Tasks: " +
-      s"[${validExecs.map(e => e.totalCores - e.freeCores).mkString(",")}] to be: ${neptuneTaskPolicy}")
+    logInfo(s"Neptune LB found [${validExecs.size}] Executors with LowPri-Tasks to be: ${neptuneTaskPolicy}")
 
     if (!validExecs.isEmpty) {
       // Executor selection policy: LOAD_BALANCE
@@ -317,7 +316,7 @@ private[spark] class TaskSchedulerImpl(
                   case TaskState.KILLED =>
                     if (killTaskAttempt(tid, false, "")) availableCores += 1
                 }
-                logInfo(s"Neptune LB PreemptExec: ${curExecutor.executorId} TID: ${tid} free cores:" +
+                logDebug(s"Neptune LB PreemptExec: ${curExecutor.executorId} TID: ${tid} free cores:" +
                   s" (${curExecutor.freeCores}) releasedCores: (${availableCores})")
               }
             }
@@ -341,11 +340,6 @@ private[spark] class TaskSchedulerImpl(
     // Find executors with low-pri tasks we can pause (descending order)
     val validExecs: Seq[ExecutorData] = backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).
       values.toSeq.sortWith(_.freeCores > _.freeCores)
-    val execStack = Stack[String]()
-    validExecs.foreach(exec => for (i <- 0 to exec.freeCores) {execStack.push(exec.executorId)})
-
-    logDebug(s"Neptune Stack ${execStack.mkString(",")} Executors: ${validExecs.map(_.executorId).mkString(",")} " +
-      s"with LowPri-Tasks: [${validExecs.map(e => e.totalCores - e.freeCores).mkString(",")}] to be: ${neptuneTaskPolicy}")
 
     // TaskLocation can be one of the categories below
     var foundCachePrefs = false
@@ -363,11 +357,13 @@ private[spark] class TaskSchedulerImpl(
           case tl: HDFSCacheTaskLocation =>
             foundCachePrefs = true
             hostToExecutors.get(tl.host).get.head
-          case _ => if (!execStack.isEmpty) execStack.pop() else validExecs.head.executorId
+          case _ => validExecs.head.executorId
         }
       }
     )
-    logInfo(s"Neptune Tasks: ${manager.tasks.length} PrefLocations ${taskExecPrefs.mkString(",")}")
+
+    logInfo(s"Neptune CL found [${validExecs.size}] Executors with LowPri-Tasks on " +
+      s"PrefLocations ${taskExecPrefs.mkString(",")} to be: ${neptuneTaskPolicy}")
 
     if (!taskExecPrefs.isEmpty) {
       // Executor selection policy: CACHE_LOCAL
@@ -389,8 +385,7 @@ private[spark] class TaskSchedulerImpl(
                   case TaskState.KILLED =>
                     if (killTaskAttempt(tid, false, "")) availableCores += 1
                 }
-                logInfo(s"Neptune CL PreemptExec: ${executorId} TID: ${tid} free cores:" +
-                  s" (${backend.getExecutorDataMap().get(executorId).get.freeCores})" +
+                logDebug(s"Neptune CL PreemptExec: ${executorId} TID: ${tid}" +
                   s" releasedCores: (${availableCores}) cachePrefs: ${foundCachePrefs}")
               }
             }
@@ -399,6 +394,77 @@ private[spark] class TaskSchedulerImpl(
       }
     } else {
       logWarning(s"Neptune CL: No Valid Executors found to ${neptuneTaskPolicy} tasks!")
+    }
+  }
+
+  private[scheduler] def neptuneCLBPolicy(manager: TaskSetManager): Unit = {
+    val neptuneTaskPolicy = sc.conf.getNeptuneTaskPolicy().toString
+    def execWithLowPriTasks(executorId: String): Boolean = {
+      executorIdToRunningTaskIds.get(executorId).get.filter(taskId =>
+        // Lower priority => more CRITICAL
+        taskIdToTaskSetManager(taskId).neptunePriority > manager.neptunePriority
+      ).size >= 0
+    }
+
+    // Find executors with low-pri tasks we can pause (descending order)
+    val validExecs: Seq[ExecutorData] = backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).
+      values.toSeq.sortWith(_.freeCores > _.freeCores)
+    val execStack = Stack[String]()
+    validExecs.foreach(exec => for (i <- 0 until exec.freeCores) {execStack.push(exec.executorId)})
+
+    // TaskLocation can be one of the categories below
+    var foundCachePrefs = false
+    val taskExecPrefs = manager.tasks.map(task =>
+      if (task.preferredLocations == Nil) {
+        validExecs.apply(manager.tasks.indexOf(task) % validExecs.size).executorId
+      } else {
+        task.preferredLocations.head match {
+          case tl: ExecutorCacheTaskLocation =>
+            foundCachePrefs = true
+            tl.executorId
+          case tl: HostTaskLocation =>
+            foundCachePrefs = true
+            hostToExecutors.get(tl.host).get.head
+          case tl: HDFSCacheTaskLocation =>
+            foundCachePrefs = true
+            hostToExecutors.get(tl.host).get.head
+          case _ => if (!execStack.isEmpty) execStack.pop() else validExecs.apply(manager.tasks.indexOf(task) % validExecs.size).executorId
+        }
+      }
+    )
+
+    logInfo(s"Neptune CLB found [${validExecs.size}] Executors with LowPri-Tasks on " +
+      s"PrefLocations ${taskExecPrefs.mkString(",")} to be: ${neptuneTaskPolicy}")
+
+    if (!taskExecPrefs.isEmpty) {
+      // Executor selection policy: CACHE_LOCAL
+      var availableCores = 0
+      for (executorId <- taskExecPrefs) {
+        if (availableCores < manager.tasks.length) {
+          executorIdToRunningTaskIds.get(executorId).foreach {
+            _.foreach { tid =>
+              if ((availableCores < manager.tasks.length) &&
+                (!executorIdToPausedTaskIds(executorId).contains(tid)) &&
+                (taskIdToTaskSetManager(tid).neptunePriority > manager.neptunePriority)) {
+                sc.conf.getNeptuneTaskPolicy() match {
+                  case TaskState.PAUSED =>
+                    if (pauseTaskAttempt(tid, false)) {
+                      taskIdToTaskSetManager(tid).addPausedTask(tid)
+                      taskIdToTaskSetManager(tid).removeRunningTask(tid)
+                      availableCores += 1
+                    }
+                  case TaskState.KILLED =>
+                    if (killTaskAttempt(tid, false, "")) availableCores += 1
+                }
+                logDebug(s"Neptune CLB PreemptExec: ${executorId} TID: ${tid}" +
+                  s" releasedCores: (${availableCores}) cachePrefs: ${foundCachePrefs}")
+              }
+            }
+          }
+        }
+      }
+    } else {
+      logWarning(s"Neptune CLB: No Valid Executors found to ${neptuneTaskPolicy} tasks!")
     }
   }
 
@@ -442,7 +508,7 @@ private[spark] class TaskSchedulerImpl(
   }
 
   override def pauseTaskAttempt(taskId: Long, interruptThread: Boolean): Boolean = {
-    logDebug(s"Pausing task $taskId")
+    logInfo(s"Pausing task $taskId")
     val execIdOpt = taskIdToExecutorId.get(taskId)
     if (execIdOpt.isDefined) {
       val execId = execIdOpt.get
@@ -459,7 +525,7 @@ private[spark] class TaskSchedulerImpl(
   }
 
   override def resumeTaskAttempt(taskId: Long): Boolean = {
-    logDebug(s"Resuming TID ${taskId}")
+    logInfo(s"Resuming TID ${taskId}")
     val execIdOpt = taskIdToExecutorId.get(taskId)
     if (execIdOpt.isDefined) {
       val execId = execIdOpt.get
