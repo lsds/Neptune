@@ -456,6 +456,8 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
       case Some("lb") => NeptunePolicy.LOAD_BALANCE
       case Some("cache_local") => NeptunePolicy.CACHE_LOCAL
       case Some("cl") => NeptunePolicy.CACHE_LOCAL
+      case Some("cache_local_balance") => NeptunePolicy.CACHE_LOCAL_BALANCE
+      case Some("clb") => NeptunePolicy.CACHE_LOCAL_BALANCE
       case _ => NeptunePolicy.LOAD_BALANCE
     }
   }

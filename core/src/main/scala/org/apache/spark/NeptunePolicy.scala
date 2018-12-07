@@ -19,7 +19,7 @@ package org.apache.spark
 
 private[spark] object NeptunePolicy extends Enumeration {
 
-  val RANDOM, LOAD_BALANCE, CACHE_LOCAL = Value
+  val RANDOM, LOAD_BALANCE, CACHE_LOCAL, CACHE_LOCAL_BALANCE = Value
 
   type NeptunePolicy = Value
 }
