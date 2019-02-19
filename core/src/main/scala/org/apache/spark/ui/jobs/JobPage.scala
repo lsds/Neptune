@@ -206,7 +206,7 @@ private[ui] class JobPage(parent: JobsTab, store: AppStatusStore) extends WebUIP
           v1.StageStatus.PENDING,
           stageId,
           0, 0, 0, 0, 0, 0, 0,
-          0L, 0L, None, None, None, None,
+          0L, 0L, None, None, None, None, None, None,
           0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L,
           "Unknown",
           None,

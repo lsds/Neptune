@@ -170,7 +170,9 @@ class StageData private[spark](
     val executorRunTime: Long,
     val executorCpuTime: Long,
     val submissionTime: Option[Date],
+    val stageSubmissionTime: Option[Long],
     val firstTaskLaunchedTime: Option[Date],
+    val firstStageTaskLaunchedTime: Option[Long],
     val completionTime: Option[Date],
     val failureReason: Option[String],
 

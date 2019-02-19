@@ -653,7 +653,7 @@ private[spark] class TaskSchedulerImpl(
     val availableCpus = shuffledOffers.map(o => o.cores).toArray
     val sortedTaskSets = rootPool.getSortedTaskSetQueue
     if (newExecAvail) {
-      sortedTaskSets.foreach( ts => ts.executorAdded())
+      sortedTaskSets.foreach(ts => ts.executorAdded())
     }
 
     // Take each TaskSet in our scheduling order, and then offer it each node in increasing order
@@ -666,7 +666,8 @@ private[spark] class TaskSchedulerImpl(
         do {
           launchedTaskAtCurrentMaxLocality = resourceOfferSingleTaskSet(
             taskSet, currentMaxLocality, shuffledOffers, availableCpus, tasks)
-          launchedAnyTask |= launchedTaskAtCurrentMaxLocality        } while (launchedTaskAtCurrentMaxLocality)
+          launchedAnyTask |= launchedTaskAtCurrentMaxLocality
+        } while (launchedTaskAtCurrentMaxLocality)
       }
       if (!launchedAnyTask) {
         taskSet.abortIfCompletelyBlacklisted(hostToExecutors)

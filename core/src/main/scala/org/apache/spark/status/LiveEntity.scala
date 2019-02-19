@@ -394,7 +394,9 @@ private class LiveStage extends LiveEntity {
       metrics.executorRunTime,
       metrics.executorCpuTime,
       info.submissionTime.map(new Date(_)),
+      if (info.submissionTime.isDefined) Some(info.submissionTime.get) else None,
       if (firstLaunchTime < Long.MaxValue) Some(new Date(firstLaunchTime)) else None,
+      if (firstLaunchTime < Long.MaxValue) Some(firstLaunchTime) else None,
       info.completionTime.map(new Date(_)),
       info.failureReason,
 
