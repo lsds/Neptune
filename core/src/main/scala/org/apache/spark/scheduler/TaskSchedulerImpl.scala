@@ -353,7 +353,12 @@ private[spark] class TaskSchedulerImpl(
             tl.executorId
           case tl: HostTaskLocation =>
             foundCachePrefs = true
-            hostToExecutors.get(tl.host).get.head
+            // hostToExecutors can be None if running locally
+            if (hasExecutorsAliveOnHost(tl.host)) {
+              hostToExecutors.get(tl.host).get.head
+            } else {
+              validExecs.head.executorId
+            }
           case tl: HDFSCacheTaskLocation =>
             foundCachePrefs = true
             hostToExecutors.get(tl.host).get.head
@@ -424,7 +429,12 @@ private[spark] class TaskSchedulerImpl(
             tl.executorId
           case tl: HostTaskLocation =>
             foundCachePrefs = true
-            hostToExecutors.get(tl.host).get.head
+            // hostToExecutors can be None if running locally
+            if (hasExecutorsAliveOnHost(tl.host)) {
+              hostToExecutors.get(tl.host).get.head
+            } else {
+              validExecs.head.executorId
+            }
           case tl: HDFSCacheTaskLocation =>
             foundCachePrefs = true
             hostToExecutors.get(tl.host).get.head
