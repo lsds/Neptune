@@ -355,6 +355,7 @@ private[spark] class TaskSchedulerImpl(
             foundCachePrefs = true
             // hostToExecutors can be None if running locally
             if (hasExecutorsAliveOnHost(tl.host)) {
+              logWarning(s"Neptune Host: ${tl.host} with no executors")
               hostToExecutors.get(tl.host).get.head
             } else {
               validExecs.head.executorId
@@ -431,6 +432,7 @@ private[spark] class TaskSchedulerImpl(
             foundCachePrefs = true
             // hostToExecutors can be None if running locally
             if (hasExecutorsAliveOnHost(tl.host)) {
+              logWarning(s"Neptune Host: ${tl.host} with no executors")
               hostToExecutors.get(tl.host).get.head
             } else {
               validExecs.head.executorId
