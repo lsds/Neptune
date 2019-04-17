@@ -139,14 +139,6 @@ private[ui] class StagePage(parent: StagesTab, store: AppStatusStore) extends We
     val summary =
       <div>
         <ul class="unstyled">
-//          <li>
-//            <strong>Time of submission:</strong>
-//            {stageData.stageSubmissionTime}
-//          </li>
-//          <li>
-//            <strong>Time of first task started:</strong>
-//            {stageData.firstStageTaskLaunchedTime}
-//          </li>
           <li>
             <strong>Queueing latency (ms):</strong>
             { if (stageData.firstStageTaskLaunchedTime.isDefined && stageData.stageSubmissionTime.isDefined) {
