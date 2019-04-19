@@ -19,8 +19,7 @@ package org.apache.spark.sql.execution.ui
 
 import java.util.Properties
 
-import scala.collection.mutable.ListBuffer
-
+import scala.collection.mutable.{ArrayBuffer, ListBuffer}
 import org.json4s.jackson.JsonMethods._
 
 import org.apache.spark._
@@ -33,7 +32,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.catalyst.util.quietly
-import org.apache.spark.sql.execution.{LeafExecNode, QueryExecution, SparkPlanInfo, SQLExecution}
+import org.apache.spark.sql.execution.{LeafExecNode, QueryExecution, SQLExecution, SparkPlanInfo}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.test.SharedSQLContext
 import org.apache.spark.status.ElementTrackingStore
@@ -86,7 +85,9 @@ class SQLAppStatusListenerSuite extends SparkFunSuite with SharedSQLContext with
       executorId = "",
       host = "",
       taskLocality = null,
-      speculative = false)
+      speculative = false,
+      pauseTimes = ArrayBuffer.empty[Long],
+      resumeTimes = ArrayBuffer.empty[Long])
     info.markFinished(TaskState.FINISHED, 1L)
     info.setAccumulables(createAccumulatorInfos(accums))
     info
