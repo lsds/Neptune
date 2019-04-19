@@ -370,6 +370,7 @@ private[spark] class AppStatusListener(
 
   override def onTaskStart(event: SparkListenerTaskStart): Unit = {
     val now = System.nanoTime()
+    event.taskInfo.stageSubmissionTime = liveStages.get((event.stageId, event.stageAttemptId)).stageSubmissionTime
     val task = new LiveTask(event.taskInfo, event.stageId, event.stageAttemptId, lastUpdateTime)
     liveTasks.put(event.taskInfo.taskId, task)
     liveUpdate(task, now)
@@ -409,6 +410,14 @@ private[spark] class AppStatusListener(
     liveTasks.get(event.taskInfo.taskId).foreach { task =>
       maybeUpdate(task, System.nanoTime())
     }
+  }
+
+  override def onTaskResumed(taskResumed: SparkListenerTaskResumed): Unit = {
+    super.onTaskResumed(taskResumed)
+  }
+
+  override def onTaskPaused(taskPaused: SparkListenerTaskPaused): Unit = {
+    super.onTaskPaused(taskPaused)
   }
 
   override def onTaskEnd(event: SparkListenerTaskEnd): Unit = {

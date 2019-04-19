@@ -21,13 +21,11 @@ import java.util.Properties
 
 import scala.collection.JavaConverters._
 import scala.collection.Map
-
 import org.json4s.JsonAST.{JArray, JInt, JString, JValue}
 import org.json4s.JsonDSL._
 import org.json4s.jackson.JsonMethods._
 import org.scalatest.Assertions
 import org.scalatest.exceptions.TestFailedException
-
 import org.apache.spark._
 import org.apache.spark.executor._
 import org.apache.spark.rdd.RDDOperationScope
@@ -35,6 +33,8 @@ import org.apache.spark.scheduler._
 import org.apache.spark.scheduler.cluster.ExecutorInfo
 import org.apache.spark.shuffle.MetadataFetchFailedException
 import org.apache.spark.storage._
+
+import scala.collection.mutable.ArrayBuffer
 
 class JsonProtocolSuite extends SparkFunSuite {
   import JsonProtocolSuite._
@@ -806,7 +806,7 @@ private[spark] object JsonProtocolSuite extends Assertions {
 
   private def makeTaskInfo(a: Long, b: Int, c: Int, d: Long, speculative: Boolean) = {
     val taskInfo = new TaskInfo(a, b, c, d, "executor", "your kind sir", TaskLocality.NODE_LOCAL,
-      speculative)
+      speculative, ArrayBuffer.empty[Long], ArrayBuffer.empty[Long])
     taskInfo.setAccumulables(
       List(makeAccumulableInfo(1), makeAccumulableInfo(2), makeAccumulableInfo(3, internal = true)))
     taskInfo

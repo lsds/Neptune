@@ -22,10 +22,8 @@ import java.lang.{Integer => JInteger, Long => JLong}
 import java.util.{Arrays, Date, Properties}
 
 import scala.collection.JavaConverters._
-import scala.reflect.{classTag, ClassTag}
-
+import scala.reflect.{ClassTag, classTag}
 import org.scalatest.BeforeAndAfter
-
 import org.apache.spark._
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.scheduler._
@@ -34,6 +32,8 @@ import org.apache.spark.status.api.v1
 import org.apache.spark.storage._
 import org.apache.spark.util.Utils
 import org.apache.spark.util.kvstore._
+
+import scala.collection.mutable.ArrayBuffer
 
 class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
 
@@ -995,7 +995,8 @@ class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
   private def newAttempt(orig: TaskInfo, nextId: Long): TaskInfo = {
     // Task reattempts have a different ID, but the same index as the original.
     new TaskInfo(nextId, orig.index, orig.attemptNumber + 1, time, orig.executorId,
-      s"${orig.executorId}.example.com", TaskLocality.PROCESS_LOCAL, orig.speculative)
+      s"${orig.executorId}.example.com", TaskLocality.PROCESS_LOCAL, orig.speculative,
+      ArrayBuffer.empty[Long], ArrayBuffer.empty[Long])
   }
 
   private def createTasks(count: Int, execs: Array[String]): Seq[TaskInfo] = {
@@ -1003,7 +1004,7 @@ class AppStatusListenerSuite extends SparkFunSuite with BeforeAndAfter {
       val exec = execs(id.toInt % execs.length)
       val taskId = nextTaskId()
       new TaskInfo(taskId, taskId.toInt, 1, time, exec, s"$exec.example.com",
-        TaskLocality.PROCESS_LOCAL, id % 2 == 0)
+        TaskLocality.PROCESS_LOCAL, id % 2 == 0, ArrayBuffer.empty[Long], ArrayBuffer.empty[Long])
     }
   }
 

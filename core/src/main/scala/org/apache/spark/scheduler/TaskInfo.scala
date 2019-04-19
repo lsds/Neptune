@@ -21,6 +21,8 @@ import org.apache.spark.TaskState
 import org.apache.spark.TaskState.TaskState
 import org.apache.spark.annotation.DeveloperApi
 
+import scala.collection.mutable.ArrayBuffer
+
 /**
  * :: DeveloperApi ::
  * Information about a running task attempt inside a TaskSet.
@@ -38,7 +40,9 @@ class TaskInfo(
     val executorId: String,
     val host: String,
     val taskLocality: TaskLocality.TaskLocality,
-    val speculative: Boolean) {
+    val speculative: Boolean,
+    val pauseTimes: ArrayBuffer[Long],
+    val resumeTimes: ArrayBuffer[Long]) {
 
   /**
    * The time when the task started remotely getting the result. Will not be set if the
@@ -75,6 +79,8 @@ class TaskInfo(
   var killed = false
 
   var paused = false
+
+  var stageSubmissionTime: Long = 0
 
   private[spark] def markGettingResult(time: Long) {
     gettingResultTime = time

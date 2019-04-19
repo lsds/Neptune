@@ -21,8 +21,9 @@ import java.util.Date
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
-
 import org.apache.spark.JobExecutionStatus
+
+import scala.collection.mutable.ArrayBuffer
 
 case class ApplicationInfo private[spark](
     id: String,
@@ -213,7 +214,10 @@ class TaskData private[spark](
     val speculative: Boolean,
     val accumulatorUpdates: Seq[AccumulableInfo],
     val errorMessage: Option[String] = None,
-    val taskMetrics: Option[TaskMetrics] = None)
+    val taskMetrics: Option[TaskMetrics] = None,
+    val pauseTimes: ArrayBuffer[Long],
+    val resumeTimes: ArrayBuffer[Long],
+    var stageSubmissionTime: Long)
 
 class TaskMetrics private[spark](
     val executorDeserializeTime: Long,

@@ -21,15 +21,15 @@ import java.util.Locale
 import javax.servlet.http.HttpServletRequest
 
 import scala.xml.Node
-
-import org.mockito.Mockito.{mock, when, RETURNS_SMART_NULLS}
-
+import org.mockito.Mockito.{RETURNS_SMART_NULLS, mock, when}
 import org.apache.spark._
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.scheduler._
 import org.apache.spark.status.AppStatusStore
 import org.apache.spark.status.config._
 import org.apache.spark.ui.jobs.{StagePage, StagesTab}
+
+import scala.collection.mutable.ArrayBuffer
 
 class StagePageSuite extends SparkFunSuite with LocalSparkContext {
 
@@ -74,7 +74,7 @@ class StagePageSuite extends SparkFunSuite with LocalSparkContext {
       (1 to 2).foreach {
         taskId =>
           val taskInfo = new TaskInfo(taskId, taskId, 0, 0, "0", "localhost", TaskLocality.ANY,
-            false)
+            false, ArrayBuffer.empty[Long], ArrayBuffer.empty[Long])
           listener.onStageSubmitted(SparkListenerStageSubmitted(stageInfo))
           listener.onTaskStart(SparkListenerTaskStart(0, 0, taskInfo))
           taskInfo.markFinished(TaskState.FINISHED, System.currentTimeMillis())

@@ -21,20 +21,20 @@ import java.util.{Properties, UUID}
 
 import scala.collection.JavaConverters._
 import scala.collection.Map
-
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import org.json4s.DefaultFormats
 import org.json4s.JsonAST._
 import org.json4s.JsonDSL._
 import org.json4s.jackson.JsonMethods._
-
 import org.apache.spark._
 import org.apache.spark.executor._
 import org.apache.spark.rdd.RDDOperationScope
 import org.apache.spark.scheduler._
 import org.apache.spark.scheduler.cluster.ExecutorInfo
 import org.apache.spark.storage._
+
+import scala.collection.mutable.ArrayBuffer
 
 /**
  * Serializes SparkListener events to/from JSON.  This protocol provides strong backwards-
@@ -773,9 +773,12 @@ private[spark] object JsonProtocol {
       case Some(values) => values.map(accumulableInfoFromJson)
       case None => Seq.empty[AccumulableInfo]
     }
+    val pauseTimes = (json \ "Pause Times").extract[ArrayBuffer[Long]]
+    val resumeTimes = (json \ "Resume Times").extract[ArrayBuffer[Long]]
 
     val taskInfo =
-      new TaskInfo(taskId, index, attempt, launchTime, executorId, host, taskLocality, speculative)
+      new TaskInfo(taskId, index, attempt, launchTime, executorId, host, taskLocality, speculative,
+        pauseTimes, resumeTimes)
     taskInfo.gettingResultTime = gettingResultTime
     taskInfo.finishTime = finishTime
     taskInfo.pauseLatency = pauseTime

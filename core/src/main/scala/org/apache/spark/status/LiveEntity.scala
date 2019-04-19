@@ -222,7 +222,11 @@ private class LiveTask(
       metrics.shuffleWriteMetrics.recordsWritten,
 
       stageId,
-      stageAttemptId)
+      stageAttemptId,
+
+      info.pauseTimes,
+      info.resumeTimes,
+      info.stageSubmissionTime)
   }
 
 }
@@ -372,6 +376,8 @@ private class LiveStage extends LiveEntity {
   // Used for cleanup of tasks after they reach the configured limit. Not written to the store.
   @volatile var cleaning = false
   var savedTasks = new AtomicInteger(0)
+
+  val stageSubmissionTime: Long = System.currentTimeMillis()
 
   def executorSummary(executorId: String): LiveExecutorStageSummary = {
     executorSummaries.getOrElseUpdate(executorId,

@@ -473,7 +473,7 @@ private[spark] class TaskSetManager(
         copiesRunning(index) += 1
         val attemptNum = taskAttempts(index).size
         val info = new TaskInfo(taskId, index, attemptNum, curTime,
-          execId, host, taskLocality, speculative)
+          execId, host, taskLocality, speculative, ArrayBuffer.empty[Long], ArrayBuffer.empty[Long])
         taskInfos(taskId) = info
         taskAttempts(index) = info :: taskAttempts(index)
         // Update our locality level for delay scheduling
@@ -509,6 +509,8 @@ private[spark] class TaskSetManager(
         val taskName = s"task ${info.id} in stage ${taskSet.id}"
         logInfo(s"Starting $taskName (TID $taskId, $host, executor ${info.executorId}, " +
           s"partition ${task.partitionId}, $taskLocality, ${serializedTask.limit()} bytes)")
+
+        info.resumeTimes+=(clock getTimeMillis())
 
         sched.dagScheduler.taskStarted(task, info)
         new TaskDescription(
@@ -727,6 +729,7 @@ private[spark] class TaskSetManager(
    */
   def handleSuccessfulTask(tid: Long, result: DirectTaskResult[_]): Unit = {
     val info = taskInfos(tid)
+    info.pauseTimes.+=(clock.getTimeMillis())
     val index = info.index
     info.markFinished(TaskState.FINISHED, clock.getTimeMillis())
     if (speculationEnabled) {
@@ -776,6 +779,7 @@ private[spark] class TaskSetManager(
    */
   def handlePausedTask(tid: Long, serializedData: ByteBuffer): Unit = {
     val info = taskInfos(tid)
+    info.pauseTimes.+=(clock.getTimeMillis())
     val index = info.index
     info.markPaused(TaskState.PAUSED)
     info.pauseLatency = SparkEnv.get.serializer.newInstance().deserialize(serializedData)
@@ -789,6 +793,7 @@ private[spark] class TaskSetManager(
    */
   def handleResumedTask(tid: Long, serializedData: ByteBuffer): Unit = {
     val info = taskInfos(tid)
+    info.resumeTimes.+=(clock.getTimeMillis())
     val index = info.index
     // Reuse pauseTime field to store resume clock time
     info.markPaused(TaskState.RUNNING)
