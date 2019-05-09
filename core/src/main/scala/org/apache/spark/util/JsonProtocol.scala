@@ -309,7 +309,9 @@ private[spark] object JsonProtocol {
     ("Finish Time" -> taskInfo.finishTime) ~
     ("Failed" -> taskInfo.failed) ~
     ("Killed" -> taskInfo.killed) ~
-    ("Accumulables" -> accumulablesToJson(taskInfo.accumulables))
+    ("Accumulables" -> accumulablesToJson(taskInfo.accumulables)) ~
+    ("Pause Times" -> JArray(taskInfo.pauseTimes.map(JLong(_)).toList)) ~
+    ("Resume Times" -> taskInfo.resumeTimes.map(JLong(_)).toList)
   }
 
   private lazy val accumulableBlacklist = Set("internal.metrics.updatedBlockStatuses")
@@ -562,6 +564,8 @@ private[spark] object JsonProtocol {
       case `stageSubmitted` => stageSubmittedFromJson(json)
       case `stageCompleted` => stageCompletedFromJson(json)
       case `taskStart` => taskStartFromJson(json)
+      case `taskPause` => taskPauseFromJson(json)
+      case `taskResume` => taskResumeFromJson(json)
       case `taskGettingResult` => taskGettingResultFromJson(json)
       case `taskEnd` => taskEndFromJson(json)
       case `jobStart` => jobStartFromJson(json)
@@ -599,6 +603,22 @@ private[spark] object JsonProtocol {
       Utils.jsonOption(json \ "Stage Attempt ID").map(_.extract[Int]).getOrElse(0)
     val taskInfo = taskInfoFromJson(json \ "Task Info")
     SparkListenerTaskStart(stageId, stageAttemptId, taskInfo)
+  }
+
+  def taskPauseFromJson(json: JValue): SparkListenerTaskPaused = {
+    val stageId = (json \ "Stage ID").extract[Int]
+    val stageAttemptId =
+      Utils.jsonOption(json \ "Stage Attempt ID").map(_.extract[Int]).getOrElse(0)
+    val taskInfo = taskInfoFromJson(json \ "Task Info")
+    SparkListenerTaskPaused(stageId, stageAttemptId, taskInfo)
+  }
+
+  def taskResumeFromJson(json: JValue): SparkListenerTaskResumed = {
+    val stageId = (json \ "Stage ID").extract[Int]
+    val stageAttemptId =
+      Utils.jsonOption(json \ "Stage Attempt ID").map(_.extract[Int]).getOrElse(0)
+    val taskInfo = taskInfoFromJson(json \ "Task Info")
+    SparkListenerTaskResumed(stageId, stageAttemptId, taskInfo)
   }
 
   def taskGettingResultFromJson(json: JValue): SparkListenerTaskGettingResult = {
@@ -765,16 +785,17 @@ private[spark] object JsonProtocol {
     val taskLocality = TaskLocality.withName((json \ "Locality").extract[String])
     val speculative = Utils.jsonOption(json \ "Speculative").exists(_.extract[Boolean])
     val gettingResultTime = (json \ "Getting Result Time").extract[Long]
+    val pauseTime = (json \ "Pause Latency").extract[Double]
     val finishTime = (json \ "Finish Time").extract[Long]
-    val pauseTime = (json \ "Pause Time").extract[Long]
     val failed = (json \ "Failed").extract[Boolean]
     val killed = Utils.jsonOption(json \ "Killed").exists(_.extract[Boolean])
     val accumulables = Utils.jsonOption(json \ "Accumulables").map(_.extract[Seq[JValue]]) match {
       case Some(values) => values.map(accumulableInfoFromJson)
       case None => Seq.empty[AccumulableInfo]
     }
-    val pauseTimes = (json \ "Pause Times").extract[ArrayBuffer[Long]]
-    val resumeTimes = (json \ "Resume Times").extract[ArrayBuffer[Long]]
+    val pauseTimes = ArrayBuffer(Utils.jsonOption(json \ "Pause Times").map { l => l.extract[List[JValue]].map(_.extract[Long]) }
+      .getOrElse(List.empty): _*)
+    val resumeTimes = ArrayBuffer(Utils.jsonOption(json \ "Resume Times").map(_.extract[List[Long]]).getOrElse(List.empty): _*)
 
     val taskInfo =
       new TaskInfo(taskId, index, attempt, launchTime, executorId, host, taskLocality, speculative,
