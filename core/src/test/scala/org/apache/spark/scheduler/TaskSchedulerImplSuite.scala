@@ -21,13 +21,11 @@ import java.nio.ByteBuffer
 import java.util.Properties
 
 import scala.collection.mutable.HashMap
-
 import org.mockito.Matchers.{anyInt, anyObject, anyString, eq => meq}
 import org.mockito.Mockito.{atLeast, atMost, never, spy, times, verify, when}
 import org.scalatest.BeforeAndAfterEach
 import org.scalatest.mockito.MockitoSugar
-
-import org.apache.spark._
+import org.apache.spark.{TaskState, _}
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config
 import org.apache.spark.scheduler.cluster.ExecutorData
@@ -46,6 +44,49 @@ class FakeSchedulerBackend(val executors: Int = 1, val cores: Int = 1) extends S
   }
   def stop() {}
   def reviveOffers() {}
+  def defaultParallelism(): Int = executors * cores
+  override def getExecutorDataMap(): mutable.HashMap[String, ExecutorData] = FakeSchedulerBackend.executorDataMap
+}
+
+class FakeSchedulerBackendWithOffers(val scheduler: TaskSchedulerImpl,
+                                     val executors: Int = 1, val cores: Int = 1) extends SchedulerBackend {
+
+  // This function is needed to simulate the behaviour of the executor to TaskSchedulerImpl communication through
+  // the Scheduler Backend.
+  def statusUpdate(tid: Long, state: TaskState.Value, serializedData: ByteBuffer): Unit = {
+    if (TaskState.isFinished(state) && !scheduler.pausedTaskIds.contains(tid)) {
+      FakeSchedulerBackend.executorDataMap(scheduler.taskIdToExecutorId(tid)).freeCores += scheduler.CPUS_PER_TASK
+    }
+    scheduler.statusUpdate(tid, state, serializedData)
+  }
+
+  def start(): Unit = {
+    0.to(executors-1).foreach {execID =>
+      val data = new ExecutorData(null, null, s"executor${execID}",
+        s"host${execID}", cores, cores, Map.empty)
+      FakeSchedulerBackend.executorDataMap.put(s"executor${execID}", data)
+    }
+  }
+
+  def stop() {}
+
+  def reviveOffers(): Unit = {
+    val workOffers = FakeSchedulerBackend.executorDataMap.map {
+      case (id, executorData) =>
+        WorkerOffer(id, executorData.executorHost, executorData.freeCores)
+    }.toIndexedSeq
+    val taskDesc = scheduler.resourceOffers(workOffers)
+    taskDesc.flatten.foreach(taskDescription => FakeSchedulerBackend.executorDataMap(taskDescription.executorId).freeCores -= 1)
+  }
+
+  override def pauseTask(taskId: Long, executorId: String, interruptThread: Boolean): Unit = {
+    FakeSchedulerBackend.executorDataMap(executorId).freeCores += scheduler.CPUS_PER_TASK
+  }
+
+  override def resumeTask(taskId: Long, executorId: String): Unit = {
+    FakeSchedulerBackend.executorDataMap(executorId).freeCores -= scheduler.CPUS_PER_TASK
+  }
+
   def defaultParallelism(): Int = executors * cores
   override def getExecutorDataMap(): mutable.HashMap[String, ExecutorData] = FakeSchedulerBackend.executorDataMap
 }
@@ -97,6 +138,14 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     setupHelper()
   }
 
+  def setupSchedulerWithAlternativeBackendScheduler(confs: (String, String)*): (TaskSchedulerImpl, FakeSchedulerBackendWithOffers) = {
+    val conf = new SparkConf().setMaster("local").setAppName("TaskSchedulerImplSuite")
+    confs.foreach { case (k, v) => conf.set(k, v) }
+    sc = new SparkContext(conf)
+    taskScheduler = new TaskSchedulerImpl(sc)
+    setupHelperForAlternativeBackendScheduler()
+  }
+
   def setupNeptuneScheduler(executors: Int, coresPerExec: Int, confs: (String, String)*): TaskSchedulerImpl = {
     val conf = new SparkConf().setMaster("local").setAppName("TaskSchedulerImplSuite")
     confs.foreach { case (k, v) => conf.set(k, v) }
@@ -146,6 +195,27 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
       }
     }
     taskScheduler
+  }
+
+  def setupHelperForAlternativeBackendScheduler(executors: Int = 1, coresPerExec: Int = 1): (TaskSchedulerImpl, FakeSchedulerBackendWithOffers) = {
+    val fakeSchedulerBackendWithOffers = new FakeSchedulerBackendWithOffers(taskScheduler, executors, coresPerExec)
+    taskScheduler.initialize(fakeSchedulerBackendWithOffers)
+    // Need to initialize a DAGScheduler for the taskScheduler to use for callbacks.
+    dagScheduler = new DAGScheduler(sc, taskScheduler) {
+      override def taskStarted(task: Task[_], taskInfo: TaskInfo): Unit = {}
+      override def executorAdded(execId: String, host: String): Unit = {}
+      override def taskSetFailed(
+                                  taskSet: TaskSet,
+                                  reason: String,
+                                  exception: Option[Throwable]): Unit = {
+        // Normally the DAGScheduler puts this in the event loop, which will eventually fail
+        // dependent jobs
+        failedTaskSet = true
+        failedTaskSetReason = reason
+        failedTaskSetException = exception
+      }
+    }
+    (taskScheduler, fakeSchedulerBackendWithOffers)
   }
 
   test("Scheduler does not always schedule tasks on the same workers") {
@@ -568,6 +638,77 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     assert(1 === taskDescriptions.length)
     assert("executor0" === taskDescriptions(0).executorId)
     assert(!failedTaskSet)
+  }
+
+  test("lowPri tasks finish during highPri tasks trying to pause them causes no double offering") {
+    // Schedule based on neptune_pri property
+    val (taskScheduler, fakeSchedulerBackend) = setupSchedulerWithAlternativeBackendScheduler(
+      "spark.scheduler.mode" -> SchedulingMode.NEPTUNE.toString,
+      "spark.neptune.task.coroutines" -> "true")
+    taskScheduler.start()
+
+    val lowPriority: Properties = new Properties()
+    lowPriority.setProperty("neptune_pri", "2")
+    val taskSetLowPri = FakeTask.createTaskSet(numTasks = 1, stageId = 0, stageAttemptId = 0, props = lowPriority)
+
+    val highPriority: Properties = new Properties()
+    highPriority.setProperty("neptune_pri", "1")
+    val taskSetHighPri = FakeTask.createTaskSet(numTasks = 1, stageId = 1, stageAttemptId = 0, props = highPriority)
+
+    val anotherTaskSetLowPri = FakeTask.createTaskSet(numTasks = 1, stageId = 2, stageAttemptId = 0, props = lowPriority)
+
+    // Submit low priority stage and check it is running.
+    taskScheduler.submitTasks(taskSetLowPri)
+    assert(1 === taskScheduler.runningTasksByExecutors.get("executor0").get)
+
+    // Submit high priority stage and check it is running
+    taskScheduler.submitTasks(taskSetHighPri)
+    assert(1 === taskScheduler.runningTasksByExecutors.get("executor0").get)
+
+    // Let the message saying that the low priority stage has finished arrive late.
+    val result = new DirectTaskResult[Int](sc.env.closureSerializer.newInstance().serialize(1L), Seq())
+    fakeSchedulerBackend.statusUpdate(0L, TaskState.FINISHED, sc.env.closureSerializer.newInstance().serialize(result))
+
+    // Check that if another taskSet is submitted there isn't an executor/core that has been marked as free.
+    // In other words, it is still the high priority stage which is running.
+    taskScheduler.submitTasks(anotherTaskSetLowPri)
+    assert(1 === taskScheduler.runningTasksByExecutors.get("executor0").get)
+  }
+
+  test("lowPri tasks finishing before highPri tasks starting causes no double offering") {
+    // Schedule based on neptune_pri property
+    val (taskScheduler, fakeSchedulerBackend) = setupSchedulerWithAlternativeBackendScheduler(
+      "spark.scheduler.mode" -> SchedulingMode.NEPTUNE.toString,
+      "spark.neptune.task.coroutines" -> "true")
+    taskScheduler.start()
+
+    val lowPriority: Properties = new Properties()
+    lowPriority.setProperty("neptune_pri", "2")
+    val taskSetLowPri = FakeTask.createTaskSet(numTasks = 1, stageId = 0, stageAttemptId = 0, props = lowPriority)
+
+    val highPriority: Properties = new Properties()
+    highPriority.setProperty("neptune_pri", "1")
+    val taskSetHighPri = FakeTask.createTaskSet(numTasks = 1, stageId = 1, stageAttemptId = 0, props = highPriority)
+
+    val anotherTaskSetLowPri = FakeTask.createTaskSet(numTasks = 1, stageId = 2, stageAttemptId = 0, props = lowPriority)
+
+    // Submit low priority stage and check it is running.
+    taskScheduler.submitTasks(taskSetLowPri)
+    assert(1 === taskScheduler.runningTasksByExecutors.get("executor0").get)
+
+    // Finish low priority stage and check nothing is running.
+    val result = new DirectTaskResult[Int](sc.env.closureSerializer.newInstance().serialize(1L), Seq())
+    fakeSchedulerBackend.statusUpdate(0L, TaskState.FINISHED, sc.env.closureSerializer.newInstance().serialize(result))
+    assert(0 === taskScheduler.runningTasksByExecutors.get("executor0").get)
+
+    // Submit high priority stage and check it is running.
+    taskScheduler.submitTasks(taskSetHighPri)
+    assert(1 === taskScheduler.runningTasksByExecutors.get("executor0").get)
+
+    // Check that if another taskSet is submitted there isn't an executor/core that has been marked as free.
+    // In other words, it is still the high priority stage which is running.
+    taskScheduler.submitTasks(anotherTaskSetLowPri)
+    assert(1 === taskScheduler.runningTasksByExecutors.get("executor0").get)
   }
 
   test("Scheduler does not crash when tasks are not serializable") {
