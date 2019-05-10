@@ -311,7 +311,7 @@ private[spark] object JsonProtocol {
     ("Killed" -> taskInfo.killed) ~
     ("Accumulables" -> accumulablesToJson(taskInfo.accumulables)) ~
     ("Pause Times" -> JArray(taskInfo.pauseTimes.map(JLong(_)).toList)) ~
-    ("Resume Times" -> taskInfo.resumeTimes.map(JLong(_)).toList)
+    ("Resume Times" -> JArray(taskInfo.resumeTimes.map(JLong(_)).toList))
   }
 
   private lazy val accumulableBlacklist = Set("internal.metrics.updatedBlockStatuses")
