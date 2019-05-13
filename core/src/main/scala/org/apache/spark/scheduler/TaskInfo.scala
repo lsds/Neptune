@@ -37,6 +37,7 @@ class TaskInfo(
     val index: Int,
     val attemptNumber: Int,
     val launchTime: Long,
+    var stageSubmissionTime: Long,
     val executorId: String,
     val host: String,
     val taskLocality: TaskLocality.TaskLocality,
@@ -79,8 +80,6 @@ class TaskInfo(
   var killed = false
 
   var paused = false
-
-  var stageSubmissionTime: Long = 0
 
   private[spark] def markGettingResult(time: Long) {
     gettingResultTime = time

@@ -472,7 +472,7 @@ private[spark] class TaskSetManager(
         // Do various bookkeeping
         copiesRunning(index) += 1
         val attemptNum = taskAttempts(index).size
-        val info = new TaskInfo(taskId, index, attemptNum, curTime,
+        val info = new TaskInfo(taskId, index, attemptNum, curTime, 0L,
           execId, host, taskLocality, speculative, ArrayBuffer.empty[Long], ArrayBuffer.empty[Long])
         taskInfos(taskId) = info
         taskAttempts(index) = info :: taskAttempts(index)

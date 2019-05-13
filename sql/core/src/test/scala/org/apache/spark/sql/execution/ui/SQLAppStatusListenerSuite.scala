@@ -81,7 +81,8 @@ class SQLAppStatusListenerSuite extends SparkFunSuite with SharedSQLContext with
       attemptNumber = attemptNumber,
       // The following fields are not used in tests
       index = 0,
-      launchTime = 0,
+      launchTime = 0L,
+      stageSubmissionTime = 0L,
       executorId = "",
       host = "",
       taskLocality = null,

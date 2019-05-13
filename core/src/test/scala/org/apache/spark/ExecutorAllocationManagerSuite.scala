@@ -1100,7 +1100,7 @@ private object ExecutorAllocationManagerSuite extends PrivateMethodTester {
       taskIndex: Int,
       executorId: String,
       speculative: Boolean = false): TaskInfo = {
-    new TaskInfo(taskId, taskIndex, 0, 0, executorId, "", TaskLocality.ANY, speculative,
+    new TaskInfo(taskId, taskIndex, 0, 0L, 0L, executorId, "", TaskLocality.ANY, speculative,
       ArrayBuffer.empty[Long], ArrayBuffer.empty[Long])
   }
 

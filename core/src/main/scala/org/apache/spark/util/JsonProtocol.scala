@@ -300,6 +300,7 @@ private[spark] object JsonProtocol {
     ("Index" -> taskInfo.index) ~
     ("Attempt" -> taskInfo.attemptNumber) ~
     ("Launch Time" -> taskInfo.launchTime) ~
+    ("Stage Submission Time" -> taskInfo.stageSubmissionTime) ~
     ("Executor ID" -> taskInfo.executorId) ~
     ("Host" -> taskInfo.host) ~
     ("Locality" -> taskInfo.taskLocality.toString) ~
@@ -780,6 +781,7 @@ private[spark] object JsonProtocol {
     val index = (json \ "Index").extract[Int]
     val attempt = Utils.jsonOption(json \ "Attempt").map(_.extract[Int]).getOrElse(1)
     val launchTime = (json \ "Launch Time").extract[Long]
+    val stageSubmissionTime = (json \ "Stage Submission Time").extract[Long]
     val executorId = (json \ "Executor ID").extract[String].intern()
     val host = (json \ "Host").extract[String].intern()
     val taskLocality = TaskLocality.withName((json \ "Locality").extract[String])
@@ -798,7 +800,7 @@ private[spark] object JsonProtocol {
     val resumeTimes = ArrayBuffer(Utils.jsonOption(json \ "Resume Times").map(_.extract[List[Long]]).getOrElse(List.empty): _*)
 
     val taskInfo =
-      new TaskInfo(taskId, index, attempt, launchTime, executorId, host, taskLocality, speculative,
+      new TaskInfo(taskId, index, attempt, launchTime, stageSubmissionTime, executorId, host, taskLocality, speculative,
         pauseTimes, resumeTimes)
     taskInfo.gettingResultTime = gettingResultTime
     taskInfo.finishTime = finishTime
