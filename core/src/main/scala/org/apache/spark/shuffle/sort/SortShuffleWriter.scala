@@ -245,7 +245,7 @@ private[spark] object SortShuffleWriter {
       partitionWriters = new Array[DiskBlockObjectWriter](dep.partitioner.numPartitions)
       val partitionWriterSegments = new Array[FileSegment](dep.partitioner.numPartitions)
       val fileBufferSize = SparkEnv.get.conf.getSizeAsKb("spark.shuffle.file.buffer", "32k") * 1024
-      val transferToEnabled = SparkEnv.get.conf.getBoolean("spark.file.transferTo", true)
+      val transferToEnabled = SparkEnv.get.conf.getBoolean("spark.file.transferTo", false)
       val syncWrites = SparkEnv.get.conf.getBoolean("spark.shuffle.sync", false)
       var i = 0
       while (i < dep.partitioner.numPartitions) {
@@ -271,7 +271,7 @@ private[spark] object SortShuffleWriter {
         }
         val record = records.next()
         val key = record._1
-        partitionWriters(dep.partitioner.getPartition(key)).write(key, record._2)
+        partitionWriters(dep.partitioner.getPartition(key)).writeCo(key, record._2)
       }
 
       i = 0

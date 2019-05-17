@@ -242,6 +242,16 @@ private[spark] class DiskBlockObjectWriter(
     recordWritten()
   }
 
+  def writeCo(key: Any, value: Any): Unit = {
+    if (!streamOpen) {
+      open()
+    }
+    objOut.writeKey(key)
+    objOut.writeValue(value)
+    numRecordsWritten += 1
+    writeMetrics.incRecordsWritten(1)
+  }
+
   override def write(b: Int): Unit = throw new UnsupportedOperationException()
 
   override def write(kvBytes: Array[Byte], offs: Int, len: Int): Unit = {
