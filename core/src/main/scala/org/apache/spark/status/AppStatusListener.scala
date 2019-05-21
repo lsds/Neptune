@@ -370,7 +370,7 @@ private[spark] class AppStatusListener(
 
   override def onTaskStart(event: SparkListenerTaskStart): Unit = {
     val now = System.nanoTime()
-    event.taskInfo.stageSubmissionTime = liveStages.get((event.stageId, event.stageAttemptId)).stageSubmissionTime
+    event.taskInfo.stageSubmissionTime = liveStages.get((event.stageId, event.stageAttemptId)).info.submissionTime.get
     val task = new LiveTask(event.taskInfo, event.stageId, event.stageAttemptId, lastUpdateTime)
     liveTasks.put(event.taskInfo.taskId, task)
     liveUpdate(task, now)

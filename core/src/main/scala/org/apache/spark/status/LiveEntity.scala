@@ -377,8 +377,6 @@ private class LiveStage extends LiveEntity {
   @volatile var cleaning = false
   var savedTasks = new AtomicInteger(0)
 
-  val stageSubmissionTime: Long = System.currentTimeMillis()
-
   def executorSummary(executorId: String): LiveExecutorStageSummary = {
     executorSummaries.getOrElseUpdate(executorId,
       new LiveExecutorStageSummary(info.stageId, info.attemptNumber, executorId))
