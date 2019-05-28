@@ -123,10 +123,12 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
         if (TaskState.isFinished(state)) {
           executorDataMap.get(executorId) match {
             case Some(executorInfo) =>
-              // Avoid corner case where task transitions from PAUSED to FINISHED
-              if (!scheduler.pausedTaskIds.contains(taskId)) {
-                  executorInfo.freeCores += scheduler.CPUS_PER_TASK
-                  makeOffers(executorId)
+              // Avoid corner case where task transitions from PAUSED to FINISHED immediately
+              if (scheduler.sc.conf.isNeptuneManualSchedulingEnabled() || !scheduler.pausedTaskIds.contains(taskId)) {
+                executorInfo.freeCores += scheduler.CPUS_PER_TASK
+                makeOffers(executorId)
+              } else {
+                logDebug("Avoiding double offered resources")
               }
             case None =>
               // Ignoring the update since we don't know about the executor.
@@ -149,6 +151,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
         }
 
       case PauseTask(taskId, executorId, interruptThread) =>
+        logDebug(s"DriverEndpoint Received PauseTask ${taskId} exec: ${executorId}")
         executorDataMap.get(executorId) match {
           case Some(executorInfo) =>
             executorInfo.executorEndpoint.send(PauseTask(taskId, executorId, interruptThread))
@@ -479,6 +482,8 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
 
   override def pauseTask(
      taskId: Long, executorId: String, interruptThread: Boolean): Unit = {
+    logDebug(s"Sending pauseEvent for ${taskId} to ${executorId}")
+    logDebug(s"DriverEndpoint ${driverEndpoint}")
     driverEndpoint.send(PauseTask(taskId, executorId, interruptThread))
   }
 

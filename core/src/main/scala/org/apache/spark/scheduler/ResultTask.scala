@@ -63,9 +63,10 @@ private[spark] class ResultTask[T, U](
     jobId: Option[Int] = None,
     appId: Option[String] = None,
     appAttemptId: Option[String] = None,
-    isPausable: Boolean = false)
+    isPausable: Boolean = false,
+    isCoroutine: Boolean = false)
   extends Task[U](stageId, stageAttemptId, partition.index, localProperties, serializedTaskMetrics,
-    jobId, appId, appAttemptId, isPausable)
+    jobId, appId, appAttemptId, isPausable, isCoroutine)
   with Serializable {
 
   @transient private[this] val preferredLocs: Seq[TaskLocation] = {
@@ -80,7 +81,7 @@ private[spark] class ResultTask[T, U](
       threadMXBean.getCurrentThreadCpuTime
     } else 0L
     val ser = SparkEnv.get.closureSerializer.newInstance()
-    if (!context.isPausable()) {
+    if (!isCoroutine) {
       val (rdd, func) = ser.deserialize[(RDD[T], (TaskContext, Iterator[T]) => U)](
         ByteBuffer.wrap(taskBinary.value), Thread.currentThread.getContextClassLoader)
       _executorDeserializeTime = System.currentTimeMillis() - deserializeStartTime

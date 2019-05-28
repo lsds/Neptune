@@ -310,7 +310,7 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     assert( 1 === taskScheduler.runningTasksByExecutors.get("executor0").get)
 
     taskScheduler.submitTasks(taskSetHighPri)
-    taskScheduler.statusUpdate(0L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(0L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
 
     // next offer should be for this high-pri task!
     singleCoreWorkerOffer = IndexedSeq(new WorkerOffer("executor0", "host0", numFreeCores))
@@ -328,7 +328,7 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     singleCoreWorkerOffer = IndexedSeq(new WorkerOffer("executor0", "host0", numFreeCores))
     taskDescriptions = taskScheduler.resourceOffers(singleCoreWorkerOffer).flatten
 
-    taskScheduler.statusUpdate(0L, TaskState.RESUMED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(0L, TaskState.RESUMED, sc.env.closureSerializer.newInstance().serialize(0L))
     // LowPri task now Resumed without creating new TaskDescription!!
     assert(0 === taskDescriptions.length)
     assert( 1 === taskScheduler.runningTasksByExecutors.get("executor0").get)
@@ -368,8 +368,8 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     assert(2 === taskScheduler.runningTasksByExecutors.get("executor0").get)
 
     taskScheduler.submitTasks(taskSetHighPri)
-    taskScheduler.statusUpdate(0L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
-    taskScheduler.statusUpdate(1L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(0L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
+    taskScheduler.statusUpdate(1L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
 
     // Offering to high-pri tasks
     singleCoreWorkerOffer = IndexedSeq(new WorkerOffer("executor0", "host0", 4))
@@ -414,8 +414,8 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     assert(4 === taskScheduler.runningTasksByExecutors.get("executor0").get)
 
     taskScheduler.submitTasks(taskSetHighPri)
-    taskScheduler.statusUpdate(0L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
-    taskScheduler.statusUpdate(1L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(0L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
+    taskScheduler.statusUpdate(1L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
 
     // Offering to high-pri tasks
     singleCoreWorkerOffer = IndexedSeq(new WorkerOffer("executor0", "host0", 2))
@@ -463,9 +463,9 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     assert(3 === taskScheduler.runningTasksByExecutors.get("executor1").get)
 
     taskScheduler.submitTasks(taskSetHighPri)
-    taskScheduler.statusUpdate(0L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
-    taskScheduler.statusUpdate(2L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
-    taskScheduler.statusUpdate(4L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(0L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
+    taskScheduler.statusUpdate(2L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
+    taskScheduler.statusUpdate(4L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
 
     // Offering to high-pri tasks
     val singleCoreWorkerOffer = IndexedSeq(new WorkerOffer("executor1", "host1", 4))
@@ -479,7 +479,50 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     assert(8 === taskScheduler.runningTasksByExecutors.values.sum)
   }
 
-  test("Neptune CL policy 7 (4 to pause) lowPri on 4 highPri (2 exec)") {
+  test("Neptune LB policy Reproducing TaskSet count bug (counting taskSet cores instead of task cores)") {
+    val taskScheduler = setupNeptuneScheduler(executors = 4, coresPerExec = 4,
+      confs = "spark.scheduler.mode" -> SchedulingMode.NEPTUNE.toString, "spark.neptune.task.coroutines" -> "true",
+      "spark.neptune.scheduling.policy" -> "lb")
+    taskScheduler.start()
+    val executorCores = 4
+
+    val lowPriority: Properties = new Properties()
+    lowPriority.setProperty("neptune_pri", "2")
+    val taskSetLowPri = FakeTask.createTaskSet(numTasks = 12, stageId = 0, stageAttemptId = 0, props = lowPriority)
+
+    val highPriority: Properties = new Properties()
+    highPriority.setProperty("neptune_pri", "1")
+    val taskSetHighPri = FakeTask.createTaskSet(numTasks = 4, stageId = 1, stageAttemptId = 0, props = highPriority)
+
+    taskScheduler.submitTasks(taskSetLowPri)
+    val doubleWorkerOffer = IndexedSeq(new WorkerOffer("executor0", "host0", executorCores),
+      new WorkerOffer("executor1", "host1", executorCores),
+      new WorkerOffer("executor2", "host2", executorCores),
+      new WorkerOffer("executor3", "host3", executorCores)
+    )
+    var taskDescriptions = taskScheduler.resourceOffers(doubleWorkerOffer).flatten
+
+    taskDescriptions.foreach { task =>
+      logInfo(s"Scheduled ${task.name} on ${task.executorId}")
+      val execData = FakeSchedulerBackend.executorDataMap.get(task.executorId).get
+      execData.freeCores -= 1
+      FakeSchedulerBackend.executorDataMap.put(task.executorId, execData)
+    }
+
+    assert(12 === taskDescriptions.length)
+    assert(taskDescriptions(0).name.contains("stage 0.0"))
+    assert(12 === taskScheduler.runningTasksByExecutors.values.sum)
+    assert(3 === taskScheduler.runningTasksByExecutors.get("executor0").get)
+    assert(3 === taskScheduler.runningTasksByExecutors.get("executor1").get)
+    assert(3 === taskScheduler.runningTasksByExecutors.get("executor2").get)
+    assert(3 === taskScheduler.runningTasksByExecutors.get("executor3").get)
+
+    taskScheduler.submitTasks(taskSetHighPri)
+    // No need to pause here - free cores available
+    assert(taskScheduler.tasksBeenPreempted == 0)
+  }
+
+  test("Neptune CLB policy 7 (4 to pause) lowPri on 4 highPri (2 exec)") {
     val taskScheduler = setupNeptuneScheduler(executors = 2, coresPerExec = 4,
       confs = "spark.scheduler.mode" -> SchedulingMode.NEPTUNE.toString, "spark.neptune.task.coroutines" -> "true",
       "spark.neptune.scheduling.policy" -> "cl")
@@ -516,10 +559,10 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     taskScheduler.submitTasks(taskSetHighPri)
     // Even through executor1 has free cores CL will pick executor0
 
-    taskScheduler.statusUpdate(0L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
-    taskScheduler.statusUpdate(2L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
-    taskScheduler.statusUpdate(4L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
-    taskScheduler.statusUpdate(6L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(0L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
+    taskScheduler.statusUpdate(2L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
+    taskScheduler.statusUpdate(4L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
+    taskScheduler.statusUpdate(6L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
 
     // Offering to high-pri tasks
     var singleCoreWorkerOffer = IndexedSeq(new WorkerOffer("executor1", "host1", 4))
@@ -536,6 +579,94 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     // Total 7: 3 low-pri 4 high-pri with cache locality
     assert(7 === taskScheduler.runningTasksByExecutors.values.sum)
   }
+
+  test("Neptune CLB policy use free available cores bug FIX") {
+    val taskScheduler = setupNeptuneScheduler(executors = 4, coresPerExec = 4,
+      confs = "spark.scheduler.mode" -> SchedulingMode.NEPTUNE.toString, "spark.neptune.task.coroutines" -> "true",
+      "spark.neptune.scheduling.policy" -> "cl")
+    taskScheduler.start()
+    val executorCores = 4
+
+    val lowPriority: Properties = new Properties()
+    lowPriority.setProperty("neptune_pri", "2")
+    val taskSetLowPri = FakeTask.createTaskSet(numTasks = 12, stageId = 0, stageAttemptId = 0, props = lowPriority)
+
+    val highPriority: Properties = new Properties()
+    highPriority.setProperty("neptune_pri", "1")
+    val taskSetHighPri = FakeTask.createTaskSet(numTasks = 1, stageId = 1, stageAttemptId = 0, props = highPriority,
+      Seq(TaskLocation("host0", "executor0")))
+
+    taskScheduler.submitTasks(taskSetLowPri)
+    val doubleWorkerOffer = IndexedSeq(new WorkerOffer("executor0", "host0", executorCores),
+      new WorkerOffer("executor1", "host1", executorCores),
+      new WorkerOffer("executor2", "host2", executorCores),
+      new WorkerOffer("executor3", "host3", executorCores)
+    )
+    val taskDescriptions = taskScheduler.resourceOffers(doubleWorkerOffer).flatten
+
+    taskDescriptions.foreach { task =>
+      logInfo(s"Scheduled ${task.name} on ${task.executorId}")
+      val execData = FakeSchedulerBackend.executorDataMap.get(task.executorId).get
+      execData.freeCores -= 1
+      FakeSchedulerBackend.executorDataMap.put(task.executorId, execData)
+    }
+
+    assert(12 === taskDescriptions.length)
+    assert(taskDescriptions(0).name.contains("stage 0.0"))
+    assert(12 === taskScheduler.runningTasksByExecutors.values.sum)
+    assert(3 === taskScheduler.runningTasksByExecutors.get("executor0").get)
+    assert(3 === taskScheduler.runningTasksByExecutors.get("executor1").get)
+    assert(3 === taskScheduler.runningTasksByExecutors.get("executor2").get)
+    assert(3 === taskScheduler.runningTasksByExecutors.get("executor3").get)
+
+    taskScheduler.submitTasks(taskSetHighPri)
+    // No need to pause here - free cores available
+    assert(taskScheduler.tasksBeenPreempted == 0)
+  }
+
+  test("Neptune CLB policy check Task Load Balance") {
+    val taskScheduler = setupNeptuneScheduler(executors = 4, coresPerExec = 4,
+      confs = "spark.scheduler.mode" -> SchedulingMode.NEPTUNE.toString, "spark.neptune.task.coroutines" -> "true",
+      "spark.neptune.scheduling.policy" -> "cl")
+    taskScheduler.start()
+    val executorCores = 4
+
+    val lowPriority: Properties = new Properties()
+    lowPriority.setProperty("neptune_pri", "2")
+    val taskSetLowPri = FakeTask.createTaskSet(numTasks = 12, stageId = 0, stageAttemptId = 0, props = lowPriority)
+
+    val highPriority: Properties = new Properties()
+    highPriority.setProperty("neptune_pri", "1")
+    val taskSetHighPri = FakeTask.createTaskSet(numTasks = 8, stageId = 1, stageAttemptId = 0, props = highPriority)
+
+    taskScheduler.submitTasks(taskSetLowPri)
+    val doubleWorkerOffer = IndexedSeq(new WorkerOffer("executor0", "host0", executorCores),
+      new WorkerOffer("executor1", "host1", executorCores),
+      new WorkerOffer("executor2", "host2", executorCores),
+      new WorkerOffer("executor3", "host3", executorCores)
+    )
+    val taskDescriptions = taskScheduler.resourceOffers(doubleWorkerOffer).flatten
+
+    taskDescriptions.foreach { task =>
+      logInfo(s"Scheduled ${task.name} on ${task.executorId}")
+      val execData = FakeSchedulerBackend.executorDataMap.get(task.executorId).get
+      execData.freeCores -= 1
+      FakeSchedulerBackend.executorDataMap.put(task.executorId, execData)
+    }
+
+    assert(12 === taskDescriptions.length)
+    assert(taskDescriptions(0).name.contains("stage 0.0"))
+    assert(12 === taskScheduler.runningTasksByExecutors.values.sum)
+    assert(3 === taskScheduler.runningTasksByExecutors.get("executor0").get)
+    assert(3 === taskScheduler.runningTasksByExecutors.get("executor1").get)
+    assert(3 === taskScheduler.runningTasksByExecutors.get("executor2").get)
+    assert(3 === taskScheduler.runningTasksByExecutors.get("executor3").get)
+
+    taskScheduler.submitTasks(taskSetHighPri)
+    // Only 4 tasks should be paused as there are already 4 available cores
+    assert(taskScheduler.tasksBeenPreempted == 4)
+  }
+
 
   test("Neptune Resume policy 12 Low-Pri tasks 4 High-Pri tasks (1 exec)") {
     val taskScheduler = setupNeptuneScheduler(executors = 1, coresPerExec = 4,
@@ -570,10 +701,10 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
 
     taskScheduler.submitTasks(taskSetHighPri)
 
-    taskScheduler.statusUpdate(0L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
-    taskScheduler.statusUpdate(1L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
-    taskScheduler.statusUpdate(2L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
-    taskScheduler.statusUpdate(3L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(0L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
+    taskScheduler.statusUpdate(1L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
+    taskScheduler.statusUpdate(2L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
+    taskScheduler.statusUpdate(3L, TaskState.PAUSED, sc.env.closureSerializer.newInstance().serialize(0L))
 
     // Offering to high-pri tasks
     var singleCoreWorkerOffer = IndexedSeq(new WorkerOffer("executor0", "host0", 4))
@@ -590,10 +721,10 @@ class TaskSchedulerImplSuite extends SparkFunSuite with LocalSparkContext with B
     taskDescriptions = taskScheduler.resourceOffers(singleCoreWorkerOffer).flatten
     taskDescriptions.foreach { task => logInfo(s"Scheduled ${task.name} on ${task.executorId}") }
 
-    taskScheduler.statusUpdate(0L, TaskState.RESUMED, sc.env.closureSerializer.newInstance().serialize(0.0))
-    taskScheduler.statusUpdate(1L, TaskState.RESUMED, sc.env.closureSerializer.newInstance().serialize(0.0))
-    taskScheduler.statusUpdate(2L, TaskState.RESUMED, sc.env.closureSerializer.newInstance().serialize(0.0))
-    taskScheduler.statusUpdate(3L, TaskState.RESUMED, sc.env.closureSerializer.newInstance().serialize(0.0))
+    taskScheduler.statusUpdate(0L, TaskState.RESUMED, sc.env.closureSerializer.newInstance().serialize(0L))
+    taskScheduler.statusUpdate(1L, TaskState.RESUMED, sc.env.closureSerializer.newInstance().serialize(0L))
+    taskScheduler.statusUpdate(2L, TaskState.RESUMED, sc.env.closureSerializer.newInstance().serialize(0L))
+    taskScheduler.statusUpdate(3L, TaskState.RESUMED, sc.env.closureSerializer.newInstance().serialize(0L))
 
     taskDescriptions = taskScheduler.resourceOffers(IndexedSeq(new WorkerOffer("executor0", "host0", 0))).flatten
     // 4 low-pri 0 high-pri

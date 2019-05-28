@@ -61,7 +61,8 @@ private[spark] abstract class Task[T](
     val jobId: Option[Int] = None,
     val appId: Option[String] = None,
     val appAttemptId: Option[String] = None,
-    @volatile var isPausable: Boolean = false) extends Serializable {
+    @volatile var isPausable: Boolean = false,
+    @volatile var isCoroutine: Boolean = false) extends Serializable {
 
   @transient lazy val metrics: TaskMetrics =
     SparkEnv.get.closureSerializer.newInstance().deserialize(ByteBuffer.wrap(serializedTaskMetrics))
@@ -90,7 +91,8 @@ private[spark] abstract class Task[T](
         localProperties,
         metricsSystem,
         metrics,
-        isPausable)
+        isPausable,
+        isCoroutine)
     }
 
     TaskContext.setTaskContext(context)
@@ -239,6 +241,12 @@ private[spark] abstract class Task[T](
     }
     if (interruptThread && taskThread != null) {
       taskThread.interrupt()
+    }
+  }
+
+  def resume(): Unit = {
+    if (context != null) {
+      context.markPaused(false)
     }
   }
 }

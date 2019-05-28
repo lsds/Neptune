@@ -361,10 +361,7 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
 
       val p = partsScanned.until(math.min(partsScanned + numPartsToTry, totalParts).toInt)
       val sc = sqlContext.sparkContext
-      val res = if (!sc.getConf.isNeptuneCoroutinesEnabled()) {
-        sc.runJob(childRDD,
-          (it: Iterator[Array[Byte]]) => if (it.hasNext) it.next() else Array.empty[Byte], p)
-      } else {
+      val res = if (sc.getConf.isNeptuneCoroutinesEnabled()) {
         val takeCoFunc: (TaskContext, Iterator[Array[Byte]]) ~> (Int, Array[Byte]) =
           coroutine { (context: TaskContext, itr: Iterator[Array[Byte]]) => {
             if (context.isPaused()) yieldval(0)
@@ -373,6 +370,16 @@ abstract class SparkPlan extends QueryPlan[SparkPlan] with Logging with Serializ
           }
           }
         sc.runJob(childRDD, takeCoFunc, p)
+      } else if (sc.getConf.isNeptuneThreadSyncEnabled()) {
+        val takeThreadSyncFunc = (context: TaskContext, itr: Iterator[Array[Byte]]) => {
+          childRDD.checkSuspend(context)
+          if (itr.hasNext) itr.next()
+          else Array.empty[Byte]
+        }
+        sc.runJob(childRDD, takeThreadSyncFunc, p)
+      } else {
+        sc.runJob(childRDD,
+          (it: Iterator[Array[Byte]]) => if (it.hasNext) it.next() else Array.empty[Byte], p)
       }
 
       buf ++= res.flatMap(decodeUnsafeRows)

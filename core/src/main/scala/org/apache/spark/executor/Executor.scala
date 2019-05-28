@@ -39,7 +39,7 @@ import org.apache.spark.util._
 import org.apache.spark.util.io.ChunkedByteBuffer
 
 import scala.collection.JavaConverters._
-import scala.collection.mutable.{ArrayBuffer, HashMap, Map}
+import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet, Map}
 import scala.util.control.NonFatal
 
 /**
@@ -149,6 +149,10 @@ private[spark] class Executor(
   // Maintains the list of paused tasks
   private val pausedTasks = new ConcurrentHashMap[Long, TaskRunner]
 
+  // Maintains Pause/Resume notifiers (avoid spawning new threads)
+  private val pausedNotifierThread: HashSet[Long] = HashSet[Long]()
+  private val resumedNotifierThread: HashSet[Long] = HashSet[Long]()
+
   // Executor for the heartbeat task.
   private val heartbeater = ThreadUtils.newDaemonSingleThreadScheduledExecutor("driver-heartbeater")
 
@@ -206,7 +210,6 @@ private[spark] class Executor(
     }
   }
 
-  var pauseStart: Long = 0L
   /**
    * ::Neptune:: Pause a Cooperative Task
    * @param taskId
@@ -214,12 +217,11 @@ private[spark] class Executor(
    * @return
    */
   def pauseTask(taskId: Long, interruptThread: Boolean): Boolean = {
-    val taskRunner: TaskRunner = runningTasks.remove(taskId)
-    if (taskRunner != null) {
-      pauseStart = System.nanoTime()
-      if (taskRunner.pause(interruptThread)) {
+    val tr: TaskRunner = runningTasks.remove(taskId)
+    if (tr != null) {
+      if (tr.pause(interruptThread)) {
         // Removal from the runningTasks is done by the Executor finally clause
-        pausedTasks.put(taskRunner.taskId, taskRunner)
+        pausedTasks.put(tr.taskId, tr)
         return true
       } else {
         logWarning(s"TaskRunner ${taskId} could not be paused")
@@ -230,30 +232,35 @@ private[spark] class Executor(
     return false
   }
 
-  var resumeStart: Long = 0L
   /**
    * ::Neptune:: Resume a Cooperative Task
    * @param taskId
    * @return
    */
   def resumeTask(taskId: Long): Boolean = {
-    logInfo(s"Trying to Resume Task ${taskId}")
+    logInfo(s"Trying to Resume (TID $taskId)")
     val tr: TaskRunner = pausedTasks.remove(taskId)
     if (tr != null) {
       val trx: TaskContext = tr.task.context
       if (trx != null) {
-        trx.markPaused(false)
-//        tr.task.getTaskMemoryManager().showMemoryUsage()
-        logInfo(s"To Resume TID ${taskId} taskRunner ${tr}")
-        resumeStart = System.nanoTime()
-        runningTasks.put(taskId, tr)
-        // If the coTask did not yield a value do not re-execute
-        if (tr.task.context.getcoInstance().hasValue) {
-          threadPool.execute(tr)
+        if (!trx.isPaused()) {
+          logWarning("Cannot Resume already-resumed Task")
+          return false
         }
-        return true
-      }
-      else {
+        // calls markPaused(false)
+        tr.task.resume()
+        runningTasks.put(taskId, tr)
+        // TaskRunner is not available a level below so do it here
+        if (trx.isCoroutine()) {
+          // If the coTask did not yield a value do not re-execute
+          if (trx.getcoInstance().hasValue) {
+            threadPool.execute(tr)
+          }
+          return true
+        } else {
+          return tr.resume()
+        }
+      } else {
         logWarning(s"Task ${taskId} can not be resumed - context was null")
       }
     } else {
@@ -296,6 +303,8 @@ private[spark] class Executor(
     val taskId = taskDescription.taskId
     val threadName = s"Executor task launch worker for task $taskId"
     private val taskName = taskDescription.name
+    // used for serialized Paused/Resumed events
+    private val pausableEventSer = env.closureSerializer.newInstance()
 
     /** If specified, this task has been killed and this option contains the reason. */
     @volatile private var reasonIfKilled: Option[String] = None
@@ -330,30 +339,107 @@ private[spark] class Executor(
         }
       }
     }
+    // Only called for ThreadSync tasks
+    def resume(): Boolean = {
+      if (task == null) {
+        logWarning("Cannot Resume non existing (null) Task")
+        return false
+      } else {
+        if (!task.isPausable) {
+          logWarning("Cannot Resume non-pausable Task")
+          return false
+        }
+        task.context.synchronized {
+          // might have finished already
+          if (!isFinished) {
+              task.context.notify()
+          } else {
+            logWarning("Cannot Resume finished Task")
+            return false
+          }
+        }
+      }
+      resumedNotifierThread.synchronized {
+        if (resumedNotifierThread.contains(taskId)) {
+          logWarning(s"Resume notifier for TID ${taskId} already exists")
+          return false
+        } else {
+          resumedNotifierThread.add(taskId)
+        }
+      }
+      // Create an independent Thread to capture the latency and propagate the RESUMED event
+      val propagateResumeEvent = new Runnable() {
+        override def run(): Unit = Utils.logUncaughtExceptions {
+          while ((task.context.getTaskResumedStartTime() > task.context.getTaskResumedEndTime()) && !isFinished)
+            Thread.`yield`()
+          if (!isFinished) {
+            val resumeLatency: Long = (task.context.getTaskResumedEndTime() - task.context.getTaskResumedStartTime()) // / 1e6
+            logInfo(s"TID ${taskId} TS resumed in ${resumeLatency} ns")
+            execBackend.statusUpdate(taskId, TaskState.RESUMED, pausableEventSer.serialize(resumeLatency))
+          }
+          resumedNotifierThread.synchronized {
+            resumedNotifierThread.remove(taskId)
+          }
+        }
+      }
+      // Reuse the taskReaperPool for event propagation
+      taskReaperPool.execute(propagateResumeEvent)
+      return true
+    }
 
     def pause(interruptThread: Boolean): Boolean = {
-      logInfo(s"Trying to Pause $taskName (TID $taskId)")
+      logInfo(s"Trying to Pause (TID $taskId)")
       if (task == null) {
         logWarning("Cannot pause non running (null) Task")
         return false
       } else {
         if (!task.isPausable) {
-          logWarning("Cannot pause non-coroutine Task")
+          logWarning("Cannot pause non-pausable Task")
           return false
         }
-        synchronized {
-          // might have finished already
-          if (!finished) {
-            if (task.context == null) {
-              logWarning("Cannot pause empty context Task (not running)")
-            } else {
-//              task.getTaskMemoryManager().showMemoryUsage()
-              task.pause(interruptThread)
-              return true
-            }
-          } else {
-            logWarning("Cannot pause finished Task")
+        // might have finished already
+        if (!isFinished) {
+          if (task.context == null) {
+            logWarning("Cannot pause empty context Task (not running)")
+            return false
           }
+          if (task.context.isPaused()) {
+            logWarning("Cannot Pause already-paused Task")
+            return false
+          }
+          pausedNotifierThread.synchronized {
+            if (pausedNotifierThread.contains(taskId)) {
+              logWarning(s"Pause notifier for TID ${taskId} already exists")
+              return false
+            } else {
+              pausedNotifierThread.add(taskId)
+            }
+          }
+          if (!task.context.isCoroutine) {
+            // Create an independent Thread to capture the latency and propagate the PAUSED event
+            val propagatePauseEvent = new Runnable() {
+              override def run(): Unit = Utils.logUncaughtExceptions {
+                while ((task.context.getTaskPausedStartTime() > task.context.getTaskPausedEndTime()) && !isFinished) {
+                  Thread.`yield`()
+                }
+                if (!isFinished) {
+                  val yieldLatency = (task.context.getTaskPausedEndTime() - task.context.getTaskPausedStartTime()) // / 1e6
+                  logInfo(s"TID ${taskId} TS yielded in ${yieldLatency} ns")
+                  execBackend.statusUpdate(taskId, TaskState.PAUSED, pausableEventSer.serialize(yieldLatency))
+                }
+                pausedNotifierThread.synchronized {
+                  pausedNotifierThread.remove(taskId)
+                }
+              }
+            }
+            // Reuse the taskReaperPool for event propagation
+            taskReaperPool.execute(propagatePauseEvent)
+          }
+          // Mark task as PAUSED in both cases
+          task.pause(interruptThread)
+          return true
+        } else {
+          logWarning("Cannot pause finished Task")
         }
       }
       return false
@@ -430,30 +516,35 @@ private[spark] class Executor(
           threadMXBean.getCurrentThreadCpuTime
         } else 0L
         var threwException = true
-        var yieldLatency = 0.0
+        var yieldLatency: Long = 0L
         val value = try {
           if (task.isPausable) {
             logInfo(s"Running Pausable Task (TID $taskId)")
             if (task.context != null) {
               // resume case
-              val resumeLatency = (System.nanoTime()-resumeStart) / 1e6
-              logInfo(s"TID ${taskId} resumed in ${resumeLatency} ms")
+              val resumeLatency = (System.nanoTime()-task.context.getTaskResumedStartTime()) // / 1e6
+              logInfo(s"TID ${taskId} resumed in ${resumeLatency} ns")
               execBackend.statusUpdate(taskId, TaskState.RESUMED, ser.serialize(resumeLatency))
             }
-            task.run(
+            val res = task.run(
                 taskAttemptId = taskId,
                 attemptNumber = taskDescription.attemptNumber,
                 metricsSystem = env.metricsSystem)
             threwException = false
-            if (task.context.getcoInstance().isCompleted) {
-              // coroutine completion case - just make sure its not marked paused
-              task.context.markPaused(false)
-              task.context.getcoInstance().result
+            // suspend case
+            if (task.isCoroutine) {
+              if (task.context.getcoInstance().isCompleted) {
+                // coroutine completion case - just make sure its not marked paused
+                task.resume()
+                task.context.getcoInstance().result
+              } else {
+                // coroutine pause/yieldval case
+                yieldLatency = (System.nanoTime() - task.context.getTaskPausedStartTime()) // / 1e6
+                logInfo(s"TID ${taskId} yielded in ${yieldLatency} ns")
+                null
+              }
             } else {
-              // coroutine pause/yieldval case
-              yieldLatency = (System.nanoTime()-pauseStart) / 1e6
-              logInfo(s"TID ${taskId} yielded in ${yieldLatency} ms")
-              null
+              res
             }
           } else {
             logInfo(s"Running normal Task (TID $taskId)")
@@ -491,7 +582,6 @@ private[spark] class Executor(
             }
           }
         }
-        //  task.context.isPaused()
         if (value == null) {
           execBackend.statusUpdate(taskId, TaskState.PAUSED, ser.serialize(yieldLatency))
         } else {

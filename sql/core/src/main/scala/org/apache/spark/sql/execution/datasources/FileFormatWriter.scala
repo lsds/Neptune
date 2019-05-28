@@ -197,21 +197,7 @@ object FileFormatWriter extends Logging {
         ret(index) = res
       }
 
-      if (!sparkSession.sparkContext.getConf.isNeptuneCoroutinesEnabled()) {
-        sparkSession.sparkContext.runJob(
-          rdd,
-          (taskContext: TaskContext, iter: Iterator[InternalRow]) => {
-            executeTask(
-              description = description,
-              sparkStageId = taskContext.stageId(),
-              sparkPartitionId = taskContext.partitionId(),
-              sparkAttemptNumber = taskContext.attemptNumber(),
-              committer,
-              iterator = iter)
-          },
-          0 until rdd.partitions.length,
-          customHandler)
-      } else {
+      if (sparkSession.sparkContext.getConf.isNeptuneCoroutinesEnabled()) {
         val writeTaskCoFunc: (TaskContext, Iterator[InternalRow]) ~> (Int, FileFormatWriter.WriteTaskResult) =
           coroutine { (context: TaskContext, iterator: Iterator[InternalRow]) => {
             val jobId = SparkHadoopWriterUtils.createJobID(new Date, context.stageId())
@@ -341,6 +327,146 @@ object FileFormatWriter extends Logging {
 
         sparkSession.sparkContext.runCoroutineJob(rdd, writeTaskCoFunc,
           0 until rdd.partitions.length, customHandler)
+      } else if (sparkSession.sparkContext.getConf.isNeptuneThreadSyncEnabled()) {
+        val writeTaskThreadSyncFunc = (context: TaskContext, iterator: Iterator[InternalRow]) => {
+          val jobId = SparkHadoopWriterUtils.createJobID(new Date, context.stageId())
+          val taskId = new TaskID(jobId, TaskType.MAP, context.partitionId())
+          val taskAttemptId = new TaskAttemptID(taskId, context.attemptNumber())
+
+          // Set up the attempt context required to use in the output committer.
+          val taskAttemptContext: TaskAttemptContext = {
+            // Set up the configuration object
+            val hadoopConf = description.serializableHadoopConf.value
+            hadoopConf.set("mapreduce.job.id", jobId.toString)
+            hadoopConf.set("mapreduce.task.id", taskAttemptId.getTaskID.toString)
+            hadoopConf.set("mapreduce.task.attempt.id", taskAttemptId.toString)
+            hadoopConf.setBoolean("mapreduce.task.ismap", true)
+            hadoopConf.setInt("mapreduce.task.partition", 0)
+            new TaskAttemptContextImpl(hadoopConf, taskAttemptId)
+          }
+          committer.setupTask(taskAttemptContext)
+
+          var currentWriter: OutputWriter = null
+          val statsTrackers: Seq[WriteTaskStatsTracker] = description.statsTrackers.map(_.newTaskInstance())
+
+          val releaseResources = () => {
+            if (currentWriter != null) {
+              try {
+                currentWriter.close()
+              } finally {
+                currentWriter = null
+              }
+            }
+          }
+
+          val newOutputWriter = (fileCounter: Int) => {
+            val ext = description.outputWriterFactory.getFileExtension(taskAttemptContext)
+            val currentPath = committer.newTaskTempFile(
+              taskAttemptContext,
+              None,
+              f"-c$fileCounter%03d" + ext)
+
+            currentWriter = description.outputWriterFactory.newInstance(
+              path = currentPath,
+              dataSchema = description.dataColumns.toStructType,
+              context = taskAttemptContext)
+
+            statsTrackers.map(_.newFile(currentPath))
+          }
+
+          var originalThrowable: Throwable = null
+          var ret: FileFormatWriter.WriteTaskResult = null
+          try {
+            try {
+              // TODO: Neptune EmptyDirectoryWriteTask and DynamicPartitionWriteTask
+              // Execute the task to write rows out and commit the task.
+              var fileCounter = 0
+              var recordsInFile: Long = 0L
+              newOutputWriter(fileCounter)
+
+              while (iterator.hasNext) {
+                rdd.checkSuspend(context)
+                if (description.maxRecordsPerFile > 0 && recordsInFile >= description.maxRecordsPerFile) {
+                  fileCounter += 1
+                  assert(fileCounter < MAX_FILE_COUNTER,
+                    s"File counter $fileCounter is beyond max value $MAX_FILE_COUNTER")
+
+                  recordsInFile = 0
+                  releaseResources()
+                  newOutputWriter(fileCounter)
+                }
+
+                val internalRow = iterator.next()
+                currentWriter.write(internalRow)
+                statsTrackers.foreach(_.newRow(internalRow))
+                recordsInFile += 1
+              }
+              releaseResources()
+              val summary = ExecutedWriteSummary(
+                updatedPartitions = Set.empty,
+                stats = statsTrackers.map(_.getFinalStats()))
+
+              releaseResources()
+              ret = WriteTaskResult(committer.commitTask(taskAttemptContext), summary)
+            } catch {
+              case cause: Throwable =>
+                // Purposefully not using NonFatal, because even fatal exceptions
+                // we don't want to have our finallyBlock suppress
+                originalThrowable = cause
+                try {
+                  logError("Aborting task", originalThrowable)
+                  TaskContext.get().asInstanceOf[TaskContextImpl].markTaskFailed(originalThrowable)
+                  // If there is an error, release resource and then abort the task
+                  try {
+                    releaseResources()
+                  } finally {
+                    committer.abortTask(taskAttemptContext)
+                    logError(s"Job $jobId aborted.")
+                  }
+                } catch {
+                  case t: Throwable =>
+                    if (originalThrowable != t) {
+                      originalThrowable.addSuppressed(t)
+                      logWarning(s"Suppressing exception in catch: ${t.getMessage}", t)
+                    }
+                }
+                throw originalThrowable
+            } finally {
+              try {
+                ()
+              } catch {
+                case t: Throwable if (originalThrowable != null && originalThrowable != t) =>
+                  originalThrowable.addSuppressed(t)
+                  logWarning(s"Suppressing exception in finally: ${t.getMessage}", t)
+                  throw originalThrowable
+              }
+            }
+          } catch {
+            case e: FetchFailedException =>
+              throw e
+            case t: Throwable =>
+              throw new SparkException("Task failed while writing rows.", t)
+          }
+          // Return Code here!
+          ret
+        }
+
+        sparkSession.sparkContext.runJob(rdd, writeTaskThreadSyncFunc,
+          0 until rdd.partitions.length, customHandler)
+      } else {
+        sparkSession.sparkContext.runJob(
+          rdd,
+          (taskContext: TaskContext, iter: Iterator[InternalRow]) => {
+            executeTask(
+              description = description,
+              sparkStageId = taskContext.stageId(),
+              sparkPartitionId = taskContext.partitionId(),
+              sparkAttemptNumber = taskContext.attemptNumber(),
+              committer,
+              iterator = iter)
+          },
+          0 until rdd.partitions.length,
+          customHandler)
       }
 
       val commitMsgs = ret.map(_.commitMsg)

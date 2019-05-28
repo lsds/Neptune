@@ -787,7 +787,7 @@ private[spark] object JsonProtocol {
     val taskLocality = TaskLocality.withName((json \ "Locality").extract[String])
     val speculative = Utils.jsonOption(json \ "Speculative").exists(_.extract[Boolean])
     val gettingResultTime = (json \ "Getting Result Time").extract[Long]
-    val pauseTime = (json \ "Pause Latency").extract[Double]
+    val pauseTime = (json \ "Pause Latency").extract[Long]
     val finishTime = (json \ "Finish Time").extract[Long]
     val failed = (json \ "Failed").extract[Boolean]
     val killed = Utils.jsonOption(json \ "Killed").exists(_.extract[Boolean])

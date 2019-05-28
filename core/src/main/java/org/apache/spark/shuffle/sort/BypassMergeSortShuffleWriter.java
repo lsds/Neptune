@@ -79,6 +79,8 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   private final int numPartitions;
   private final BlockManager blockManager;
   private final Partitioner partitioner;
+  private final TaskContext taskContext;
+  private final boolean isSuspendable;
   private final ShuffleWriteMetrics writeMetrics;
   private final int shuffleId;
   private final int mapId;
@@ -107,13 +109,15 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       SparkConf conf) {
     // Use getSizeAsKb (not bytes) to maintain backwards compatibility if no units are provided
     this.fileBufferSize = (int) conf.getSizeAsKb("spark.shuffle.file.buffer", "32k") * 1024;
-    this.transferToEnabled = conf.getBoolean("spark.file.transferTo", true);
+    this.transferToEnabled = conf.getBoolean("spark.file.transferTo", false);
     this.blockManager = blockManager;
     final ShuffleDependency<K, V, V> dep = handle.dependency();
     this.mapId = mapId;
     this.shuffleId = dep.shuffleId();
     this.partitioner = dep.partitioner();
     this.numPartitions = partitioner.numPartitions();
+    this.taskContext = taskContext;
+    this.isSuspendable = (taskContext.isPausable() && !taskContext.isCoroutine());
     this.writeMetrics = taskContext.taskMetrics().shuffleWriteMetrics();
     this.serializer = dep.serializer();
     this.shuffleBlockResolver = shuffleBlockResolver;
@@ -133,6 +137,10 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     partitionWriters = new DiskBlockObjectWriter[numPartitions];
     partitionWriterSegments = new FileSegment[numPartitions];
     for (int i = 0; i < numPartitions; i++) {
+      // Neptune notify suspension
+      if (this.isSuspendable) {
+        checkSuspend(taskContext);
+      }
       final Tuple2<TempShuffleBlockId, File> tempShuffleBlockIdPlusFile =
         blockManager.diskBlockManager().createTempShuffleBlock();
       final File file = tempShuffleBlockIdPlusFile._2();
@@ -146,12 +154,20 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     writeMetrics.incWriteTime(System.nanoTime() - openStartTime);
 
     while (records.hasNext()) {
+      // Neptune notify suspension
+      if (this.isSuspendable) {
+        checkSuspend(taskContext);
+      }
       final Product2<K, V> record = records.next();
       final K key = record._1();
       partitionWriters[partitioner.getPartition(key)].write(key, record._2());
     }
 
     for (int i = 0; i < numPartitions; i++) {
+      // Neptune notify suspension
+      if (this.isSuspendable) {
+        checkSuspend(taskContext);
+      }
       final DiskBlockObjectWriter writer = partitionWriters[i];
       partitionWriterSegments[i] = writer.commitAndGet();
       writer.close();
@@ -193,6 +209,10 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     boolean threwException = true;
     try {
       for (int i = 0; i < numPartitions; i++) {
+        // Neptune notify suspension
+        if (this.isSuspendable) {
+          checkSuspend(taskContext);
+        }
         final File file = partitionWriterSegments[i].file();
         if (file.exists()) {
           final FileInputStream in = new FileInputStream(file);

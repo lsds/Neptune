@@ -53,9 +53,7 @@ private[spark] class LocalRDDCheckpointData[T: ClassTag](@transient private val 
       !SparkEnv.get.blockManager.master.contains(RDDBlockId(rdd.id, i))
     }
     if (missingPartitionIndices.nonEmpty) {
-      if (!rdd.conf.isNeptuneCoroutinesEnabled()) {
-        rdd.sparkContext.runJob(rdd, action, missingPartitionIndices)
-      } else {
+      if (rdd.conf.isNeptuneCoroutinesEnabled()) {
         val toIteratorSizeCoFunc: (TaskContext, Iterator[T]) ~> (Int, Long) =
           coroutine { (context: TaskContext, itr: Iterator[T]) => {
             var count = 0L
@@ -70,6 +68,19 @@ private[spark] class LocalRDDCheckpointData[T: ClassTag](@transient private val 
           }
          }
         rdd.sparkContext.runJob(rdd, toIteratorSizeCoFunc, missingPartitionIndices)
+      } else if (rdd.conf.isNeptuneThreadSyncEnabled()) {
+        val toIteratorSizeThreadSync = (context: TaskContext, itr: Iterator[T]) => {
+          var count = 0L
+          while (itr.hasNext) {
+            rdd.checkSuspend(context)
+            count += 1L
+            itr.next()
+          }
+          count
+        }
+        rdd.sparkContext.runJob(rdd, toIteratorSizeThreadSync, missingPartitionIndices)
+      } else {
+        rdd.sparkContext.runJob(rdd, action, missingPartitionIndices)
       }
     }
 

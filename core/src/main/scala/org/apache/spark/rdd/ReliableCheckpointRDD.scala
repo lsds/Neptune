@@ -138,10 +138,7 @@ private[spark] object ReliableCheckpointRDD extends Logging {
     val broadcastedConf = sc.broadcast(
       new SerializableConfiguration(sc.hadoopConfiguration))
     // TODO: This is expensive because it computes the RDD again unnecessarily (SPARK-8582)
-    if (!sc.getConf.isNeptuneCoroutinesEnabled()) {
-      sc.runJob(originalRDD,
-        writePartitionToCheckpointFile[T](checkpointDirPath.toString, broadcastedConf) _)
-    } else {
+    if (sc.getConf.isNeptuneCoroutinesEnabled()) {
       val path = checkpointDirPath.toString
       val writePartitionToCheckpointFileCoFunc: (TaskContext, Iterator[T]) ~> (Int, Unit) =
         coroutine { (ctx: TaskContext, iterator: Iterator[T]) => {
@@ -214,6 +211,78 @@ private[spark] object ReliableCheckpointRDD extends Logging {
         }
        }
       sc.runJob(originalRDD, writePartitionToCheckpointFileCoFunc)
+    } else if (sc.getConf.isNeptuneThreadSyncEnabled()) {
+      val path = checkpointDirPath.toString
+      val writePartitionToCheckpointFileThreadSyncFunc = (ctx: TaskContext, iterator: Iterator[T]) => {
+        val blockSize = -1
+        val env = SparkEnv.get
+        val outputDir = new Path(path)
+        val fs = outputDir.getFileSystem(broadcastedConf.value.value)
+
+        val finalOutputName = ReliableCheckpointRDD.checkpointFileName(ctx.partitionId())
+        val finalOutputPath = new Path(outputDir, finalOutputName)
+        val tempOutputPath =
+          new Path(outputDir, s".$finalOutputName-attempt-${ctx.attemptNumber()}")
+
+        val bufferSize = env.conf.getInt("spark.buffer.size", 65536)
+
+        val fileOutputStream = if (blockSize < 0) {
+          val fileStream = fs.create(tempOutputPath, false, bufferSize)
+          if (env.conf.get(CHECKPOINT_COMPRESS)) {
+            CompressionCodec.createCodec(env.conf).compressedOutputStream(fileStream)
+          } else {
+            fileStream
+          }
+        } else {
+          // This is mainly for testing purpose
+          fs.create(tempOutputPath, false, bufferSize,
+            fs.getDefaultReplication(fs.getWorkingDirectory), blockSize)
+        }
+        val serializer = env.serializer.newInstance()
+        val serializeStream = serializer.serializeStream(fileOutputStream)
+
+        var originalThrowable: Throwable = null
+        try {
+          while (iterator.hasNext) {
+            originalRDD.checkSuspend(ctx)
+            serializeStream.writeObject(iterator.next())
+          }
+        } catch {
+          case t: Throwable =>
+            // Purposefully not using NonFatal, because even fatal exceptions
+            // we don't want to have our finallyBlock suppress
+            originalThrowable = t
+            throw originalThrowable
+        } finally {
+          try {
+            serializeStream.close()
+          } catch {
+            case t: Throwable if (originalThrowable != null && originalThrowable != t) =>
+              originalThrowable.addSuppressed(t)
+              logWarning(s"Suppressing exception in finally: ${t.getMessage}", t)
+              throw originalThrowable
+          }
+        }
+
+        if (!fs.rename(tempOutputPath, finalOutputPath)) {
+          if (!fs.exists(finalOutputPath)) {
+            logInfo(s"Deleting tempOutputPath $tempOutputPath")
+            fs.delete(tempOutputPath, false)
+            throw new IOException("Checkpoint failed: failed to save output of task: " +
+              s"${ctx.attemptNumber()} and final output path does not exist: $finalOutputPath")
+          } else {
+            // Some other copy of this task must've finished before us and renamed it
+            logInfo(s"Final output path $finalOutputPath already exists; not overwriting it")
+            if (!fs.delete(tempOutputPath, false)) {
+              logWarning(s"Error deleting ${tempOutputPath}")
+            }
+          }
+        }
+      }
+      sc.runJob(originalRDD, writePartitionToCheckpointFileThreadSyncFunc)
+    } else {
+      sc.runJob(originalRDD,
+        writePartitionToCheckpointFile[T](checkpointDirPath.toString, broadcastedConf) _)
     }
 
     if (originalRDD.partitioner.nonEmpty) {

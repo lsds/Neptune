@@ -76,19 +76,7 @@ object SparkHadoopWriter extends Logging {
 
     // Try to write all RDD partitions as a Hadoop OutputFormat.
     try {
-      val ret = if (!sparkContext.getConf.isNeptuneCoroutinesEnabled()) {
-         sparkContext.runJob(rdd, (context: TaskContext, iter: Iterator[(K, V)]) => {
-          executeTask(
-            context = context,
-            config = config,
-            jobTrackerId = jobTrackerId,
-            commitJobId = commitJobId,
-            sparkPartitionId = context.partitionId,
-            sparkAttemptNumber = context.attemptNumber,
-            committer = committer,
-            iterator = iter)
-        })
-      } else {
+      val ret = if (sparkContext.getConf.isNeptuneCoroutinesEnabled()) {
         val executorTaskCoFunc: (TaskContext, Iterator[(K, V)]) ~> (Int, TaskCommitMessage) =
         coroutine { (context: TaskContext, iterator: Iterator[(K, V)]) => {
           // Set up a task.
@@ -163,6 +151,90 @@ object SparkHadoopWriter extends Logging {
         }
         }
         sparkContext.runJob(rdd, executorTaskCoFunc)
+      } else if (sparkContext.getConf.isNeptuneThreadSyncEnabled()) {
+        val executorTaskTheadSyncFunc = (context: TaskContext, iterator: Iterator[(K, V)]) => {
+            // Set up a task.
+            val taskContext = config.createTaskAttemptContext(
+              jobTrackerId, commitJobId, context.partitionId, context.attemptNumber)
+            committer.setupTask(taskContext)
+
+            val (outputMetrics, callback) = initHadoopOutputMetrics(context)
+
+            // Initiate the writer.
+            config.initWriter(taskContext, context.partitionId)
+            var recordsWritten = 0L
+
+            // Write all rows in RDD partition.
+            var originalThrowable: Throwable = null
+            var committedMessage: TaskCommitMessage = null
+            try {
+              try {
+                while (iterator.hasNext) {
+                  rdd.checkSuspend(context)
+                  val pair = iterator.next()
+                  config.write(pair)
+                  // Update bytes written metric every few records
+                  maybeUpdateOutputMetrics(outputMetrics, callback, recordsWritten)
+                  recordsWritten += 1
+                }
+
+                config.closeWriter(taskContext)
+                committedMessage = committer.commitTask(taskContext)
+              } catch {
+                case cause: Throwable =>
+                  // Purposefully not using NonFatal, because even fatal exceptions
+                  // we don't want to have our finallyBlock suppress
+                  originalThrowable = cause
+                  try {
+                    logError("Aborting ThreadSync task", originalThrowable)
+                    TaskContext.get().asInstanceOf[TaskContextImpl].markTaskFailed(originalThrowable)
+                    // If there is an error, release resource and then abort the task.
+                    try {
+                      config.closeWriter(taskContext)
+                    } finally {
+                      committer.abortTask(taskContext)
+                      logError(s"ThreadSync Task ${taskContext.getTaskAttemptID} aborted.")
+                    }
+                  } catch {
+                    case t: Throwable =>
+                      if (originalThrowable != t) {
+                        originalThrowable.addSuppressed(t)
+                        logWarning(s"Suppressing exception in catch: ${t.getMessage}", t)
+                      }
+                  }
+                  throw originalThrowable
+              } finally {
+                try {
+                  ()
+                } catch {
+                  case t: Throwable if (originalThrowable != null && originalThrowable != t) =>
+                    originalThrowable.addSuppressed(t)
+                    logWarning(s"Suppressing exception in finally: ${t.getMessage}", t)
+                    throw originalThrowable
+                }
+              }
+              outputMetrics.setBytesWritten(callback())
+              outputMetrics.setRecordsWritten(recordsWritten)
+            } catch {
+              case t: Throwable =>
+                throw new SparkException("Coroutine Task failed while writing rows", t)
+            }
+            committedMessage
+        }
+        sparkContext.runJob(rdd, executorTaskTheadSyncFunc)
+
+      } else {
+        sparkContext.runJob(rdd, (context: TaskContext, iter: Iterator[(K, V)]) => {
+          executeTask(
+            context = context,
+            config = config,
+            jobTrackerId = jobTrackerId,
+            commitJobId = commitJobId,
+            sparkPartitionId = context.partitionId,
+            sparkAttemptNumber = context.attemptNumber,
+            committer = committer,
+            iterator = iter)
+        })
       }
 
       committer.commitJob(jobContext, ret)

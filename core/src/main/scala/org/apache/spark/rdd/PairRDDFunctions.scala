@@ -938,16 +938,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
     self.partitioner match {
       case Some(p) =>
         val index = p.getPartition(key)
-        val res = if (!self.conf.isNeptuneCoroutinesEnabled()) {
-          val process = (it: Iterator[(K, V)]) => {
-            val buf = new ArrayBuffer[V]
-            for (pair <- it if pair._1 == key) {
-              buf += pair._2
-            }
-            buf
-          }: Seq[V]
-          self.context.runJob(self, process, Array(index))
-        } else {
+        val res = if (self.conf.isNeptuneCoroutinesEnabled()) {
           // process coroutine implementation
           val processCoFunc: (TaskContext, Iterator[(K, V)]) ~> (Int, Seq[V]) =
             coroutine { (context: TaskContext, itr: Iterator[(K, V)]) => {
@@ -965,6 +956,28 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
              }
             }
           self.context.runJob(self, processCoFunc, Array(index))
+        } else if (self.conf.isNeptuneThreadSyncEnabled()) {
+          val processThreadSyncFunc = (context: TaskContext, itr: Iterator[(K, V)]) => {
+            val buf = new ArrayBuffer[V]
+            while (itr.hasNext) {
+              self.checkSuspend(context)
+              val pair = itr.next()
+              if (pair._1 == key) {
+                buf += pair._2
+              }
+            }
+            buf.toSeq
+          }
+          self.context.runJob(self, processThreadSyncFunc, Array(index))
+        } else {
+          val process = (it: Iterator[(K, V)]) => {
+            val buf = new ArrayBuffer[V]
+            for (pair <- it if pair._1 == key) {
+              buf += pair._2
+            }
+            buf
+          }: Seq[V]
+          self.context.runJob(self, process, Array(index))
         }
         res(0)
       case None =>

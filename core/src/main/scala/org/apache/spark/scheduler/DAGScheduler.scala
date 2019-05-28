@@ -1232,7 +1232,8 @@ class DAGScheduler(
             stage.pendingPartitions += id
             new ShuffleMapTask(stage.id, stage.latestInfo.attemptNumber,
               taskBinary, part, locs, properties, serializedTaskMetrics, Option(jobId),
-              Option(sc.applicationId), sc.applicationAttemptId, sc.getConf.isNeptuneCoroutinesEnabled())
+              Option(sc.applicationId), sc.applicationAttemptId, sc.getConf.isNeptuneSuspensionEnabled(),
+              sc.getConf.isNeptuneCoroutinesEnabled())
           }
 
         case stage: ResultStage =>
@@ -1243,7 +1244,8 @@ class DAGScheduler(
             new ResultTask(stage.id, stage.latestInfo.attemptNumber,
               taskBinary, part, locs, id, properties, serializedTaskMetrics,
               // Play it safe: stage.coFunc != null
-              Option(jobId), Option(sc.applicationId), sc.applicationAttemptId, sc.getConf.isNeptuneCoroutinesEnabled())
+              Option(jobId), Option(sc.applicationId), sc.applicationAttemptId, sc.getConf.isNeptuneSuspensionEnabled(),
+              sc.getConf.isNeptuneCoroutinesEnabled())
           }
       }
     } catch {

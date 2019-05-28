@@ -87,13 +87,7 @@ private[kafka010] object KafkaWriter extends Logging {
       topic: Option[String] = None): Unit = {
     val schema = queryExecution.analyzed.output
     validateQuery(schema, kafkaParameters, topic)
-    if (!sparkSession.sqlContext.sparkContext.getConf.isNeptuneCoroutinesEnabled()) {
-      queryExecution.toRdd.foreachPartition { iter =>
-        val writeTask = new KafkaWriteTask(kafkaParameters, schema, topic)
-        Utils.tryWithSafeFinally(block = writeTask.execute(iter))(
-          finallyBlock = writeTask.close())
-      }
-    } else {
+    if (sparkSession.sqlContext.sparkContext.getConf.isNeptuneCoroutinesEnabled()) {
       val writeTaskCoFunc: (TaskContext, Iterator[InternalRow]) ~> (Int, Unit) =
         coroutine { (context: TaskContext, iterator: Iterator[InternalRow]) => {
           val writeTask = new KafkaWriteTask(kafkaParameters, schema, topic)
@@ -142,6 +136,18 @@ private[kafka010] object KafkaWriter extends Logging {
         }
         }
       queryExecution.toRdd.foreachPartitionCoFunc(writeTaskCoFunc)
+    } else if (sparkSession.sqlContext.sparkContext.getConf.isNeptuneThreadSyncEnabled()) {
+      queryExecution.toRdd.foreachPartitionThreadSync { (ctx, iter) =>
+        val writeTask = new KafkaWriteTask(kafkaParameters, schema, topic)
+        Utils.tryWithSafeFinally(block = writeTask.execute(iter, ctx))(
+          finallyBlock = writeTask.close())
+      }
+    } else {
+      queryExecution.toRdd.foreachPartition { iter =>
+        val writeTask = new KafkaWriteTask(kafkaParameters, schema, topic)
+        Utils.tryWithSafeFinally(block = writeTask.execute(iter))(
+          finallyBlock = writeTask.close())
+      }
     }
   }
 }

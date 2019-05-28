@@ -2353,9 +2353,9 @@ class SparkContext(config: SparkConf) extends Logging {
    */
   def pauseTaskAttempt(
       taskId: Long,
-      interruptThread: Boolean = true): Boolean = {
-    if (!this.getConf.isNeptuneCoroutinesEnabled()) {
-      logError("Can not pause non Coroutine Task!!")
+      interruptThread: Boolean = false): Boolean = {
+    if (!this.getConf.isNeptuneSuspensionEnabled()) {
+      logError("Can not pause non Suspendable Task!!")
       return false
     }
     dagScheduler.pauseTaskAttempt(taskId, interruptThread)
@@ -2370,8 +2370,8 @@ class SparkContext(config: SparkConf) extends Logging {
    */
   def resumeTaskAttempt(
       taskId: Long): Boolean = {
-    if (!this.getConf.isNeptuneCoroutinesEnabled()) {
-      logError("Can not resume non Coroutine Task!!")
+    if (!this.getConf.isNeptuneSuspensionEnabled()) {
+      logError("Can not resume non Suspendable Task!!")
       return false
     }
     dagScheduler.resumeTaskAttempt(taskId)

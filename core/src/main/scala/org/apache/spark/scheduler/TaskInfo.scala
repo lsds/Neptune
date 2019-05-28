@@ -69,11 +69,11 @@ class TaskInfo(
    * The time when the task has completed successfully (including the time to remotely fetch
    * results, if necessary).
    */
-  var finishTime: Long = 0
-
-  var pauseLatency: Double = 0.0
-
-  var resumeLatency: Double = 0.0
+  var finishTime: Long = 0L
+  // In nanoseconds
+  var pauseLatency: Long = 0L
+  // In nanoseconds
+  var resumeLatency: Long = 0L
 
   var failed = false
 

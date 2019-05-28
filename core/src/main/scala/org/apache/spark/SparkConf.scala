@@ -428,12 +428,35 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
   /**
    * Neptune Project Extra configuration
    */
+
+  def enableNeptuneThreadSync(): Unit = {
+    if (contains("spark.neptune.task.coroutines")) {
+      get("spark.neptune.task.coroutines") match {
+        case "false" =>
+        case "true" => throw new SparkException("spark.neptune.task can only be \"threadsync\" or " +
+          "\"coroutines\".")
+      }
+    }
+    set("spark.neptune.task.threadsync", true.toString)
+  }
+
   def enableNeptuneCoroutines(): Unit = {
+    if (contains("spark.neptune.task.threadsync")) {
+      get("spark.neptune.task.threadsync") match {
+        case "false" =>
+        case "true" => throw new SparkException("spark.neptune.task can only be \"threadsync\" or " +
+          "\"coroutines\".")
+      }
+    }
     set("spark.neptune.task.coroutines", true.toString)
   }
 
   def disableNeptuneCoroutines(): Unit = {
     set("spark.neptune.task.coroutines", false.toString)
+  }
+
+  def disableNeptuneThreadsync(): Unit = {
+    set("spark.neptune.task.threadsync", false.toString)
   }
 
   def isNeptuneCoroutinesEnabled(): Boolean = {
@@ -442,6 +465,18 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
       case Some("false") => false
       case _ => false
     }
+  }
+
+  def isNeptuneThreadSyncEnabled(): Boolean = {
+    getOption("spark.neptune.task.threadsync") match {
+      case Some("true") => true
+      case Some("false") => false
+      case _ => false
+    }
+  }
+
+  def isNeptuneSuspensionEnabled(): Boolean = {
+    return isNeptuneCoroutinesEnabled() || isNeptuneThreadSyncEnabled()
   }
 
   def setNeptuneSchedulingPolicy(schedulingPolicy: String): Unit = {
@@ -454,8 +489,8 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
       case Some("r") => NeptunePolicy.RANDOM
       case Some("load_balance") => NeptunePolicy.LOAD_BALANCE
       case Some("lb") => NeptunePolicy.LOAD_BALANCE
-      case Some("cache_local") => NeptunePolicy.CACHE_LOCAL
-      case Some("cl") => NeptunePolicy.CACHE_LOCAL
+      case Some("cache_local") => NeptunePolicy.CACHE_LOCAL_BALANCE
+      case Some("cl") => NeptunePolicy.CACHE_LOCAL_BALANCE
       case Some("cache_local_balance") => NeptunePolicy.CACHE_LOCAL_BALANCE
       case Some("clb") => NeptunePolicy.CACHE_LOCAL_BALANCE
       case _ => NeptunePolicy.LOAD_BALANCE

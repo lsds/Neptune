@@ -48,13 +48,7 @@ class ZippedWithIndexRDD[T: ClassTag](prev: RDD[T]) extends RDD[(T, Long)](prev)
       Array(0L)
     } else {
       // Check for coroutines case
-      if (!sparkContext.getConf.isNeptuneCoroutinesEnabled()) {
-        prev.context.runJob(
-          prev,
-          Utils.getIteratorSize _,
-          0 until n - 1 // do not need to count the last partition
-        ).scanLeft(0L)(_ + _)
-      } else {
+      if (sparkContext.getConf.isNeptuneCoroutinesEnabled()) {
         val toIteratorSizeCoFunc: (TaskContext, Iterator[T]) ~> (Int, Long) =
           coroutine { (context: TaskContext, itr: Iterator[T]) => {
             var count = 0L
@@ -69,6 +63,23 @@ class ZippedWithIndexRDD[T: ClassTag](prev: RDD[T]) extends RDD[(T, Long)](prev)
           }
           }
         prev.context.runJob(prev, toIteratorSizeCoFunc, 0 until n - 1).scanLeft(0L)(_ + _)
+      } else if (sparkContext.getConf.isNeptuneThreadSyncEnabled()) {
+        val toIteratorSizeThreadSuncFunc = (context: TaskContext, itr: Iterator[T]) => {
+          var count = 0L
+          while (itr.hasNext) {
+            prev.checkSuspend(context)
+            count += 1L
+            itr.next()
+          }
+          count
+        }
+        prev.context.runJob(prev, toIteratorSizeThreadSuncFunc, 0 until n - 1).scanLeft(0L)(_ + _)
+      } else {
+        prev.context.runJob(
+          prev,
+          Utils.getIteratorSize _,
+          0 until n - 1 // do not need to count the last partition
+        ).scanLeft(0L)(_ + _)
       }
     }
   }

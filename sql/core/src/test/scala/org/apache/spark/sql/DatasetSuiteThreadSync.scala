@@ -19,20 +19,20 @@ package org.apache.spark.sql
 
 import java.sql.{Date, Timestamp}
 
-import org.apache.spark.{SparkException}
+import org.apache.spark.SparkException
 import org.apache.spark.sql.catalyst.encoders.{OuterScopes, RowEncoder}
 import org.apache.spark.sql.catalyst.plans.{LeftAnti, LeftSemi}
 import org.apache.spark.sql.catalyst.util.sideBySide
-import org.apache.spark.sql.execution.{LogicalRDD, RDDScanExec}
 import org.apache.spark.sql.execution.exchange.{BroadcastExchangeExec, ShuffleExchangeExec}
 import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.execution.{LogicalRDD, RDDScanExec}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.test.{SharedCoroutineSQLContext}
+import org.apache.spark.sql.test.{SharedThreadSyncSQLContext}
 import org.apache.spark.sql.types._
 
 
-class DatasetSuiteCo extends QueryTest with SharedCoroutineSQLContext {
+class DatasetSuiteThreadSync extends QueryTest with SharedThreadSyncSQLContext {
   import testImplicits._
 
   private implicit val ordering = Ordering.by((c: ClassData) => c.a -> c.b)

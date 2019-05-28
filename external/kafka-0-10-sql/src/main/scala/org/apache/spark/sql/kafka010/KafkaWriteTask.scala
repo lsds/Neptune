@@ -21,6 +21,7 @@ import java.{util => ju}
 
 import org.apache.kafka.clients.producer.{Callback, KafkaProducer, ProducerRecord, RecordMetadata}
 
+import org.apache.spark.TaskContext
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, Literal, UnsafeProjection}
 import org.apache.spark.sql.types.{BinaryType, StringType}
@@ -46,6 +47,32 @@ private[kafka010] class KafkaWriteTask(
       val currentRow = iterator.next()
       sendRow(currentRow, producer)
     }
+  }
+
+  def execute(iterator: Iterator[InternalRow], context: TaskContext): Unit = {
+    producer = CachedKafkaProducer.getOrCreate(producerConfiguration)
+    while (iterator.hasNext && failedWrite == null) {
+      checkSuspend(context)
+      val currentRow = iterator.next()
+      sendRow(currentRow, producer)
+    }
+  }
+
+  /** Neptune ThreadSync wait/notify impl */
+  def checkSuspend(context: TaskContext): Unit = {
+    if (context.isPaused()) {
+      context.synchronized {
+        while (context.isPaused()) {
+          try {
+            context.setTaskPausedEndTime(System.nanoTime())
+            context.wait()
+          } catch {
+            case e: InterruptedException =>
+          }
+        }
+      }
+    }
+    context.setTaskResumedEndTime(System.nanoTime())
   }
 
   def close(): Unit = {

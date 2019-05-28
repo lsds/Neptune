@@ -135,6 +135,26 @@ class SparkConfSuite extends SparkFunSuite with LocalSparkContext with ResetSyst
     assert(conf.getNeptuneTaskPolicy() === TaskState.PAUSED)
   }
 
+  test(" Test Neptune invalid conf") {
+    val conf = new SparkConf(false)
+    assert(conf.getAll.toSet === Set())
+    // Coroutine Tasks Disabled by default
+    assert(conf.isNeptuneCoroutinesEnabled() === false)
+    // ThreadSync Tasks Disabled by default
+    assert(conf.isNeptuneThreadSyncEnabled() === false)
+
+    // Enable one of Coroutines/ThreadSync
+    conf.enableNeptuneCoroutines()
+    assert(conf.isNeptuneCoroutinesEnabled() === true)
+    assert(conf.isNeptuneThreadSyncEnabled() === false)
+    conf.disableNeptuneCoroutines()
+    conf.enableNeptuneThreadSync()
+    assert(conf.isNeptuneThreadSyncEnabled() === true)
+    assert(conf.isNeptuneCoroutinesEnabled() === false)
+    // Now ThreadSync is enabled - failure case
+    intercept[SparkException] { conf.enableNeptuneCoroutines() }
+  }
+
   test("creating SparkContext without master and app name") {
     val conf = new SparkConf(false)
     intercept[SparkException] { sc = new SparkContext(conf) }

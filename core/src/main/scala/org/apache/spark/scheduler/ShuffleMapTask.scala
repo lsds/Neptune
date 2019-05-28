@@ -65,9 +65,10 @@ private[spark] class ShuffleMapTask(
     jobId: Option[Int] = None,
     appId: Option[String] = None,
     appAttemptId: Option[String] = None,
-    isPausable: Boolean = false)
+    isPausable: Boolean = false,
+    isCoroutine: Boolean = false)
   extends Task[MapStatus](stageId, stageAttemptId, partition.index, localProperties,
-    serializedTaskMetrics, jobId, appId, appAttemptId, isPausable)
+    serializedTaskMetrics, jobId, appId, appAttemptId, isPausable, isCoroutine)
   with Logging {
 
   /** A constructor used only in test suites. This does not require passing in an RDD. */
@@ -94,7 +95,7 @@ private[spark] class ShuffleMapTask(
       threadMXBean.getCurrentThreadCpuTime - deserializeStartCpuTime
     } else 0L
 
-    if (!context.isPausable()) {
+    if (!isCoroutine) {
       val manager = SparkEnv.get.shuffleManager
       val records = rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
       var writer: ShuffleWriter[Any, Any] = null
