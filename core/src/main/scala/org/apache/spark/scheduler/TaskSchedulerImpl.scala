@@ -222,15 +222,14 @@ private[spark] class TaskSchedulerImpl(
       hasReceivedTask = true
 
       if (sc.conf.isNeptuneSuspensionEnabled() && manager.neptunePriority == 1 && !executorIdToRunningTaskIds.isEmpty) {
+        val startTime = System.nanoTime()
         tasksBeenPreempted = sc.conf.getNeptuneSchedulingPolicy() match {
           case NeptunePolicy.RANDOM => neptuneRandomPolicy(manager)
           case NeptunePolicy.LOAD_BALANCE => neptuneLBPolicy(manager)
           case NeptunePolicy.CACHE_LOCAL_BALANCE => neptuneCLBPolicy(manager)
         }
         // Avoid Triggering another offer - now done in SchedulerBackends PausedEvent
-        if (tasksBeenPreempted != 0) {
-          return
-        }
+        log.info(s"Tasks been preempted: ${tasksBeenPreempted} and took: ${(System.nanoTime() - startTime) / 1e6} ms")
       }
     }
     backend.reviveOffers()
@@ -300,9 +299,9 @@ private[spark] class TaskSchedulerImpl(
       ).size >= 0
     }
 
-    val executorFreeCores: Int = backend.getExecutorDataMap().values.map(_.freeCores).sum
+    val executorFreeCores: Int = backend.synchronized(backend.getExecutorDataMap().values.map(_.freeCores).sum)
     // Find executors with low-pri tasks we can pause (descending order)
-    val validExecs: Seq[ExecutorData] = backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).values.toSeq.sortWith(_.freeCores > _.freeCores)
+    val validExecs: Seq[ExecutorData] = backend.synchronized(backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).values.toSeq.sortWith(_.freeCores > _.freeCores))
     logInfo(s"Neptune LB found [${executorFreeCores}] ExecutorFreeCores and [${validExecs.size}] Executors with LowPri-Tasks that can be: ${neptuneTaskPolicy}")
 
     var tasksBeenPreempted: Int = 0
@@ -354,8 +353,8 @@ private[spark] class TaskSchedulerImpl(
     }
 
     // Find executors with low-pri tasks we can pause (descending order)
-    val validExecs: Seq[ExecutorData] = backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).
-      values.toSeq.sortWith(_.freeCores > _.freeCores)
+    val validExecs: Seq[ExecutorData] = backend.synchronized(backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).
+      values.toSeq.sortWith(_.freeCores > _.freeCores))
     val execStack = Stack[String]()
     validExecs.foreach(exec => for (_ <- 0 until exec.freeCores) {execStack.push(exec.executorId)})
 
@@ -394,14 +393,22 @@ private[spark] class TaskSchedulerImpl(
       }
     )
 
+
+    var keysAndValues = "\n"
+    for (entry <- execTaskCount) {
+      keysAndValues += s"Executor:${entry._1} NeedCores:${entry._2} FreeCores:${backend.synchronized(backend.getExecutorDataMap().get(entry._1).get.freeCores)} " +
+        s"TRunning: ${executorIdToRunningTaskIds(entry._1).size} TPaused:${executorIdToPausedTaskIds(entry._1).size} \n"
+    }
+
     logInfo(s"Neptune CLB found [${validExecs.size}] Executors with LowPri-Tasks on " +
-      s"PrefLocations ${execTaskCount.mkString(",")} that can be: ${neptuneTaskPolicy}")
+      s"PrefLocations ${execTaskCount} that can be: ${neptuneTaskPolicy}")
+    logInfo(keysAndValues)
 
     var tasksBeenPreempted: Int = 0
     if (!execTaskCount.isEmpty) {
       // Executor selection policy: CACHE_LOCAL
       for (executorId <- execTaskCount.keys) {
-        var availableExecCores = backend.getExecutorDataMap().get(executorId).get.freeCores
+        var availableExecCores = backend.synchronized(backend.getExecutorDataMap().get(executorId).get.freeCores)
         if (availableExecCores < execTaskCount(executorId)) {
           executorIdToRunningTaskIds.get(executorId).foreach {
             _.foreach { tid =>
@@ -475,10 +482,10 @@ private[spark] class TaskSchedulerImpl(
   }
 
   override def pauseTaskAttempt(taskId: Long, interruptThread: Boolean): Boolean = {
-    logInfo(s"Pausing task $taskId")
     val execIdOpt = taskIdToExecutorId.get(taskId)
     if (execIdOpt.isDefined) {
       val execId = execIdOpt.get
+      logInfo(s"Pausing task $taskId on executor $execId")
       if (executorIdToRunningTaskIds.contains(execId)) {
         executorIdToPausedTaskIds(execId).add(taskId)
         backend.pauseTask(taskId, execId, interruptThread)
@@ -492,10 +499,10 @@ private[spark] class TaskSchedulerImpl(
   }
 
   override def resumeTaskAttempt(taskId: Long): Boolean = {
-    logInfo(s"Resuming TID ${taskId}")
     val execIdOpt = taskIdToExecutorId.get(taskId)
     if (execIdOpt.isDefined) {
       val execId = execIdOpt.get
+      logInfo(s"Resuming task $taskId on executor $execId")
       if (executorIdToPausedTaskIds.contains(execId)) {
         executorIdToPausedTaskIds(execId).remove(taskId)
         backend.resumeTask(taskId, execId)
