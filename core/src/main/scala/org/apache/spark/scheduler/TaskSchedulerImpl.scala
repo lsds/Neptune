@@ -31,7 +31,7 @@ import org.apache.spark.scheduler.cluster.ExecutorData
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.{AccumulatorV2, ThreadUtils, Utils}
 
-import scala.collection.Set
+import scala.collection.{Set, mutable}
 import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet, Stack}
 import scala.util.Random
 
@@ -355,11 +355,12 @@ private[spark] class TaskSchedulerImpl(
     // Find executors with low-pri tasks we can pause (descending order)
     val validExecs: Seq[ExecutorData] = backend.synchronized(backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).
       values.toSeq.sortWith(_.freeCores > _.freeCores))
-    val execStack = Stack[String]()
-    validExecs.foreach(exec => for (_ <- 0 until exec.freeCores) {execStack.push(exec.executorId)})
+    // Assuming uniform executors
+    val totalExecCores = validExecs.head.totalCores
 
     // TaskLocation can be one of the categories below
     var foundCachePrefs = false
+    var nonCachePrefTaskCount = 0
     // Executor -> TaskCount Map
     val execTaskCount = collection.mutable.Map[String, Int]().withDefaultValue(0)
     manager.tasks.foreach(task =>
@@ -374,25 +375,28 @@ private[spark] class TaskSchedulerImpl(
             // hostToExecutors can be None if running locally
             if (hasExecutorsAliveOnHost(tl.host)) {
               logWarning(s"Neptune Host: ${tl.host} with no executors")
-              hostToExecutors.get(tl.host).get.head
               execTaskCount.update(hostToExecutors.get(tl.host).get.head, execTaskCount(hostToExecutors.get(tl.host).get.head) + 1)
             } else {
-              val currExec = if (!execStack.isEmpty) execStack.pop() else validExecs.apply(manager.tasks.indexOf(task) % validExecs.size).executorId
-              execTaskCount.update(currExec, execTaskCount(currExec) + 1)
+              nonCachePrefTaskCount += 1
             }
           case tl: HDFSCacheTaskLocation =>
             foundCachePrefs = true
             execTaskCount.update(hostToExecutors.get(tl.host).get.head, execTaskCount(hostToExecutors.get(tl.host).get.head) + 1)
           case _ =>
-            val currExec = if (!execStack.isEmpty) execStack.pop() else validExecs.apply(manager.tasks.indexOf(task) % validExecs.size).executorId
-            execTaskCount.update(currExec, execTaskCount(currExec) + 1)
+            nonCachePrefTaskCount += 1
         }
       } else {
-        val currExec = if (!execStack.isEmpty) execStack.pop() else validExecs.apply(manager.tasks.indexOf(task) % validExecs.size).executorId
-        execTaskCount.update(currExec, execTaskCount(currExec) + 1)
+        nonCachePrefTaskCount += 1
       }
     )
 
+    val execList = mutable.ListBuffer[String]()
+    execTaskCount.foreach( (execCountData) => for (_ <- 0 until (totalExecCores - execCountData._2)) {execList += execCountData._1})
+    for (tid <- 0 until nonCachePrefTaskCount) {
+      val currExec = if (!execList.isEmpty) execList(tid % execList.size) else validExecs.apply(tid % validExecs.size).executorId
+      execTaskCount.update(currExec, execTaskCount(currExec) + 1)
+      execList -= currExec
+    }
 
     var keysAndValues = "\n"
     for (entry <- execTaskCount) {
@@ -402,7 +406,7 @@ private[spark] class TaskSchedulerImpl(
 
     logInfo(s"Neptune CLB found [${validExecs.size}] Executors with LowPri-Tasks on " +
       s"PrefLocations ${execTaskCount} that can be: ${neptuneTaskPolicy}")
-    logInfo(keysAndValues)
+    logDebug(keysAndValues)
 
     var tasksBeenPreempted: Int = 0
     if (!execTaskCount.isEmpty) {
