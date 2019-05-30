@@ -596,8 +596,12 @@ private[ui] class StagePage(parent: StagesTab, store: AppStatusStore) extends We
           shuffleReadTimeProportionPos + shuffleReadTimeProportion
         val runtimeAndPausePositions =
           runtimeAndPauseDurationsProportions.scanLeft(executorRuntimeProportionPos)((position, duration) => position + duration)
-        val shuffleWriteTimeProportionPos =
-          runtimeAndPausePositions.last + runtimeAndPauseDurationsProportions.last
+
+        var shuffleWriteTimeProportionPos = runtimeAndPausePositions.last
+        if (!runtimeAndPauseDurationsProportions.isEmpty) {
+          shuffleWriteTimeProportionPos += runtimeAndPauseDurationsProportions.last
+        }
+
         val serializationTimeProportionPos =
           shuffleWriteTimeProportionPos + shuffleWriteTimeProportion
         val gettingResultTimeProportionPos =
