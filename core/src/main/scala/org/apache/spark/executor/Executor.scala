@@ -407,15 +407,17 @@ private[spark] class Executor(
             logWarning("Cannot Pause already-paused Task")
             return false
           }
-          pausedNotifierThread.synchronized {
-            if (pausedNotifierThread.contains(taskId)) {
-              logWarning(s"Pause notifier for TID ${taskId} already exists")
-              return false
-            } else {
-              pausedNotifierThread.add(taskId)
-            }
-          }
+
           if (!task.context.isCoroutine) {
+            // Notifiers only used for ThreadSync implementation
+            pausedNotifierThread.synchronized {
+              if (pausedNotifierThread.contains(taskId)) {
+                logWarning(s"Pause notifier for TID ${taskId} already exists")
+                return false
+              } else {
+                pausedNotifierThread.add(taskId)
+              }
+            }
             // Create an independent Thread to capture the latency and propagate the PAUSED event
             val propagatePauseEvent = new Runnable() {
               override def run(): Unit = Utils.logUncaughtExceptions {
