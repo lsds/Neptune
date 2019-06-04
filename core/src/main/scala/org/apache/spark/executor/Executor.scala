@@ -322,6 +322,10 @@ private[spark] class Executor(
     /** How much the JVM process has spent in GC when the task starts to run. */
     @volatile var startGCTime: Long = _
 
+    var runningTotalGC: Long = 0
+    var runningTotalRunTime: Long = 0
+    var runningTotalCpuTime: Long = 0
+
     /**
      * The task to run. This will be set in run() by deserializing the task binary coming
      * from the driver. Once it is set, it will never be changed.
@@ -476,7 +480,9 @@ private[spark] class Executor(
       logInfo(s"Running $taskName (TID $taskId)")
       execBackend.statusUpdate(taskId, TaskState.RUNNING, EMPTY_BYTE_BUFFER)
       var taskStart: Long = 0
+      var taskResumed: Long = 0
       var taskStartCpu: Long = 0
+      var taskResumedCpu: Long = 0
       startGCTime = computeTotalGcTime()
 
       try {
@@ -514,9 +520,11 @@ private[spark] class Executor(
         }
         // Run the actual task and measure its runtime.
         taskStart = System.currentTimeMillis()
+        taskResumed = taskStart
         taskStartCpu = if (threadMXBean.isCurrentThreadCpuTimeSupported) {
           threadMXBean.getCurrentThreadCpuTime
         } else 0L
+        taskResumedCpu = taskStartCpu
         var threwException = true
         var yieldLatency: Long = 0L
         val value = try {
@@ -525,7 +533,12 @@ private[spark] class Executor(
             if (task.context != null) {
               // resume case
               val resumeLatency = (System.nanoTime()-task.context.getTaskResumedStartTime()) // / 1e6
-              logInfo(s"TID ${taskId} resumed in ${resumeLatency} ns")
+              logInfo(s"TID ${taskId} resumed in ${resumeLatency} ms")
+              startGCTime = computeTotalGcTime()
+              taskResumed = System.currentTimeMillis()
+              taskResumedCpu = if (threadMXBean.isCurrentThreadCpuTimeSupported) {
+                threadMXBean.getCurrentThreadCpuTime
+              } else 0L
               execBackend.statusUpdate(taskId, TaskState.RESUMED, ser.serialize(resumeLatency))
             }
             val res = task.run(
@@ -585,6 +598,12 @@ private[spark] class Executor(
           }
         }
         if (value == null) {
+          runningTotalGC += (computeTotalGcTime() - startGCTime)
+          runningTotalRunTime += (System.currentTimeMillis() - taskResumed)
+          val currentThreadCpuTime = if (threadMXBean.isCurrentThreadCpuTimeSupported) {
+            threadMXBean.getCurrentThreadCpuTime
+          } else 0L
+          runningTotalCpuTime += (currentThreadCpuTime - taskResumedCpu)
           execBackend.statusUpdate(taskId, TaskState.PAUSED, ser.serialize(yieldLatency))
         } else {
           task.context.fetchFailed.foreach { fetchFailure =>
@@ -615,10 +634,9 @@ private[spark] class Executor(
           task.metrics.setExecutorDeserializeCpuTime(
             (taskStartCpu - deserializeStartCpuTime) + task.executorDeserializeCpuTime)
           // We need to subtract Task.run()'s deserialization time to avoid double-counting
-          task.metrics.setExecutorRunTime((taskFinish - taskStart) - task.executorDeserializeTime)
-          task.metrics.setExecutorCpuTime(
-            (taskFinishCpu - taskStartCpu) - task.executorDeserializeCpuTime)
-          task.metrics.setJvmGCTime(computeTotalGcTime() - startGCTime)
+          task.metrics.setExecutorRunTime(runningTotalRunTime + (taskFinish - taskResumed) - task.executorDeserializeTime)
+          task.metrics.setExecutorCpuTime(runningTotalCpuTime + (taskFinishCpu - taskResumedCpu) - task.executorDeserializeCpuTime)
+          task.metrics.setJvmGCTime(runningTotalGC + (computeTotalGcTime() - startGCTime))
           task.metrics.setResultSerializationTime(afterSerialization - beforeSerialization)
 
           // Expose task metrics using the Dropwizard metrics system.
@@ -742,8 +760,8 @@ private[spark] class Executor(
             // Collect latest accumulator values to report back to the driver
             val accums: Seq[AccumulatorV2[_, _]] =
               if (task != null) {
-                task.metrics.setExecutorRunTime(System.currentTimeMillis() - taskStart)
-                task.metrics.setJvmGCTime(computeTotalGcTime() - startGCTime)
+                task.metrics.setExecutorRunTime(runningTotalRunTime + (System.currentTimeMillis() - taskResumed))
+                task.metrics.setJvmGCTime(runningTotalGC + (computeTotalGcTime() - startGCTime))
                 task.collectAccumulatorUpdates(taskFailed = true)
               } else {
                 Seq.empty
@@ -992,7 +1010,7 @@ private[spark] class Executor(
     for (taskRunner <- runningTasks.values().asScala) {
       if (taskRunner.task != null) {
         taskRunner.task.metrics.mergeShuffleReadMetrics()
-        taskRunner.task.metrics.setJvmGCTime(curGCTime - taskRunner.startGCTime)
+        taskRunner.task.metrics.setJvmGCTime(taskRunner.runningTotalGC + (curGCTime - taskRunner.startGCTime))
         accumUpdates += ((taskRunner.taskId, taskRunner.task.metrics.accumulators()))
       }
     }
