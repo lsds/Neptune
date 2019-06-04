@@ -69,6 +69,14 @@ object FakeTask {
     new TaskSet(tasks, stageId, stageAttemptId, priority = 0, props)
   }
 
+  def createTaskSetWithUnevenLocationPreference(numTasks: Int, stageId: Int, stageAttemptId: Int, props: Properties, prefLocs: Seq[TaskLocation]*):
+  TaskSet = {
+    val tasks = Array.tabulate[Task[_]](numTasks) { i =>
+      new FakeTask(stageId, i, if (prefLocs.size > i) prefLocs(i) else Nil)
+    }
+    new TaskSet(tasks, stageId, stageAttemptId, priority = 0, props)
+  }
+
   def createShuffleMapTaskSet(
       numTasks: Int,
       stageId: Int,

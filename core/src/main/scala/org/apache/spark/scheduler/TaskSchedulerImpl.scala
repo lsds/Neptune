@@ -33,6 +33,7 @@ import org.apache.spark.util.{AccumulatorV2, ThreadUtils, Utils}
 
 import scala.collection.{Set, mutable}
 import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet, Stack}
+import scala.util.control.Breaks._
 import scala.util.Random
 
 /**
@@ -227,6 +228,7 @@ private[spark] class TaskSchedulerImpl(
           case NeptunePolicy.RANDOM => neptuneRandomPolicy(manager)
           case NeptunePolicy.LOAD_BALANCE => neptuneLBPolicy(manager)
           case NeptunePolicy.CACHE_LOCAL_BALANCE => neptuneCLBPolicy(manager)
+          case NeptunePolicy.CACHE_MEMORY_BALANCE => neptuneCMBPolicy(manager)
         }
         // Avoid Triggering another offer - now done in SchedulerBackends PausedEvent
         log.info(s"Tasks been preempted: ${tasksBeenPreempted} and took: ${(System.nanoTime() - startTime) / 1e6} ms")
@@ -407,6 +409,175 @@ private[spark] class TaskSchedulerImpl(
     logInfo(s"Neptune CLB found [${validExecs.size}] Executors with LowPri-Tasks on " +
       s"PrefLocations ${execTaskCount} that can be: ${neptuneTaskPolicy}")
     logDebug(keysAndValues)
+
+    var tasksBeenPreempted: Int = 0
+    if (!execTaskCount.isEmpty) {
+      // Executor selection policy: CACHE_LOCAL
+      for (executorId <- execTaskCount.keys) {
+        var availableExecCores = backend.synchronized(backend.getExecutorDataMap().get(executorId).get.freeCores)
+        if (availableExecCores < execTaskCount(executorId)) {
+          executorIdToRunningTaskIds.get(executorId).foreach {
+            _.foreach { tid =>
+              if ((availableExecCores < execTaskCount(executorId)) &&
+                (!executorIdToPausedTaskIds(executorId).contains(tid)) &&
+                (taskIdToTaskSetManager(tid).neptunePriority > manager.neptunePriority)) {
+                sc.conf.getNeptuneTaskPolicy() match {
+                  case TaskState.PAUSED =>
+                    if (pauseTaskAttempt(tid, false)) {
+                      taskIdToTaskSetManager(tid).addPausedTask(tid)
+                      taskIdToTaskSetManager(tid).removeRunningTask(tid)
+                      availableExecCores += 1
+                      tasksBeenPreempted += 1
+                    }
+                  case TaskState.KILLED =>
+                    if (killTaskAttempt(tid, false, "")) {
+                      availableExecCores += 1
+                      tasksBeenPreempted += 1
+                    }
+                }
+                logDebug(s"Neptune CLB PreemptExec: ${executorId} TID: ${tid}" +
+                  s" releasedCores: (${availableExecCores}) cachePrefs: ${foundCachePrefs}")
+              }
+            }
+          }
+        }
+      }
+    } else {
+      logWarning(s"Neptune CLB: No Valid Executors found to ${neptuneTaskPolicy} tasks!")
+    }
+    tasksBeenPreempted
+  }
+
+  private[scheduler] def neptuneCMBPolicy(manager: TaskSetManager): Int = {
+    val neptuneTaskPolicy = sc.conf.getNeptuneTaskPolicy().toString
+    def execWithLowPriTasks(executorId: String): Boolean = {
+      executorIdToRunningTaskIds.get(executorId).getOrElse(HashSet.empty[Long]).filter(taskId =>
+        // Lower priority => more CRITICAL
+        taskIdToTaskSetManager(taskId).neptunePriority > manager.neptunePriority
+      ).size >= 0
+    }
+
+    // Find executors with low-pri tasks we can pause (descending order)
+    val validExecs: Seq[ExecutorData] = backend.synchronized(backend.getExecutorDataMap().filterKeys(execWithLowPriTasks).
+      values.toSeq.sortWith(_.freeCores > _.freeCores))
+
+    val executorsTotalTasks: Array[(String, Int)] = backend.synchronized(
+      backend.getExecutorDataMap()
+        .filterKeys(execWithLowPriTasks)
+        .values
+        .toSeq
+        .sortBy(_.executorId)
+        .map(executorData => (executorData.executorId, executorData.totalCores))
+        .toArray)
+    val executorIdToIndex = collection.mutable.Map[String, Int]()
+    val indexToExecutorId = collection.mutable.Map[Int, String]()
+    for (i <- executorsTotalTasks.indices) {
+      executorIdToIndex.put(s"executor${i}", i)
+      indexToExecutorId.put(i, s"executor${i}")
+    }
+    var pointer = 0
+    val localityPreferenceCountPerExecutor: Array[Int] = Array.tabulate(executorsTotalTasks.length)(_ => 0)
+    var thereIsSpaceLeft = true
+    var numOfTasksWhoseLocalityPreferenceCouldNotBeSatisfied = 0
+    var numOfTasksWithNoPlaceToPut = 0
+
+    val execStack = Stack[String]()
+    validExecs.foreach(exec => for (_ <- 0 until exec.freeCores) {execStack.push(exec.executorId)})
+
+    // TaskLocation can be one of the categories below
+    var foundCachePrefs = false
+    // Executor -> TaskCount Map
+    val execTaskCount = collection.mutable.Map[String, Int]().withDefaultValue(0)
+
+    def tryToPutByLoadBalancing(): Unit = {
+      if (thereIsSpaceLeft) {
+        breakable {
+          for (i <- executorsTotalTasks.indices) {
+            val (executorName, executorTotalCores) = executorsTotalTasks(pointer)
+            if (execTaskCount(executorName) < executorTotalCores) {
+              execTaskCount.update(executorName, execTaskCount(executorName) + 1)
+              pointer = (pointer + 1) % executorsTotalTasks.length
+              break
+            }
+            pointer = (pointer + 1) % executorsTotalTasks.length
+          }
+          numOfTasksWithNoPlaceToPut = numOfTasksWithNoPlaceToPut + 1
+          thereIsSpaceLeft = false
+        }
+      }
+    }
+
+    def tryToPutByLocalityPreference(executorToUpdate: String): Unit = {
+      val indexOfExecutorToUpdate = executorIdToIndex(executorToUpdate)
+      val coresUsedAtExecutorToUpdate = execTaskCount(executorToUpdate)
+      val (_, executorToUpdateTotalCores) = executorsTotalTasks(indexOfExecutorToUpdate)
+      if (coresUsedAtExecutorToUpdate >= executorToUpdateTotalCores) {
+        if (localityPreferenceCountPerExecutor(indexOfExecutorToUpdate) < executorToUpdateTotalCores
+          && thereIsSpaceLeft) {
+          breakable {
+            for (_ <- executorsTotalTasks.indices) {
+              val (executorName, executorTotalCores) = executorsTotalTasks(pointer)
+              if (execTaskCount(executorName) < executorTotalCores) {
+                execTaskCount.update(executorName, execTaskCount(executorName) + 1)
+                localityPreferenceCountPerExecutor(indexOfExecutorToUpdate) += 1
+                pointer = (pointer + 1) % executorsTotalTasks.length
+                break
+              }
+              pointer = (pointer + 1) % executorsTotalTasks.length
+            }
+            thereIsSpaceLeft = false
+          }
+        }
+        numOfTasksWhoseLocalityPreferenceCouldNotBeSatisfied = numOfTasksWhoseLocalityPreferenceCouldNotBeSatisfied + 1
+      } else {
+        execTaskCount.update(executorToUpdate, execTaskCount(executorToUpdate) + 1)
+        localityPreferenceCountPerExecutor(indexOfExecutorToUpdate) += 1
+      }
+    }
+
+    manager.tasks.foreach(task =>
+      // If no cache prefs - ignore
+      if (task.preferredLocations != Nil) {
+        task.preferredLocations.head match {
+          case tl: ExecutorCacheTaskLocation =>
+            foundCachePrefs = true
+            val executorToUpdate = tl.executorId
+            tryToPutByLocalityPreference(executorToUpdate)
+          case tl: HostTaskLocation =>
+            foundCachePrefs = true
+            // hostToExecutors can be None if running locally
+            if (hasExecutorsAliveOnHost(tl.host)) {
+              logWarning(s"Neptune Host: ${tl.host} with no executors")
+              val executorToUpdate = hostToExecutors.get(tl.host).get.head
+              tryToPutByLocalityPreference(executorToUpdate)
+            } else {
+              val executorToUpdate = indexToExecutorId(pointer)
+              execTaskCount.update(executorToUpdate, execTaskCount(executorToUpdate) + 1)
+              pointer = (pointer + 1) % executorsTotalTasks.length
+            }
+          case tl: HDFSCacheTaskLocation =>
+            foundCachePrefs = true
+            val executorToUpdate = hostToExecutors.get(tl.host).get.head
+            tryToPutByLocalityPreference(executorToUpdate)
+          case _ =>
+            tryToPutByLoadBalancing()
+        }
+      } else {
+        tryToPutByLoadBalancing()
+      }
+    )
+
+    var keysAndValues = "\n"
+    for (entry <- execTaskCount) {
+      keysAndValues += s"Executor:${entry._1} NeedCores:${entry._2} FreeCores:${backend.synchronized(backend.getExecutorDataMap().get(entry._1).get.freeCores)} " +
+        s"TRunning: ${executorIdToRunningTaskIds(entry._1).size} TPaused:${executorIdToPausedTaskIds(entry._1).size} \n"
+    }
+
+    logInfo(s"Neptune CLB found [${validExecs.size}] Executors with LowPri-Tasks on " +
+      s"PrefLocations ${execTaskCount} that can be: ${neptuneTaskPolicy}")
+    logInfo(keysAndValues)
+    logInfo(s"Number of tasks whose locality preference could not be satisfied: ${numOfTasksWhoseLocalityPreferenceCouldNotBeSatisfied}")
+    logInfo(s"Number of tasks for which place was not found: ${numOfTasksWhoseLocalityPreferenceCouldNotBeSatisfied + numOfTasksWithNoPlaceToPut}")
 
     var tasksBeenPreempted: Int = 0
     if (!execTaskCount.isEmpty) {
