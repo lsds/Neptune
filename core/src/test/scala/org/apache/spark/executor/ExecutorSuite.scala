@@ -131,8 +131,8 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
   }
 
   /**
-    * ::Neptune::
-    */
+   * ::Neptune::
+   */
   test("Neptune ResultTask expected result") {
     val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
     sc = new SparkContext(conf)

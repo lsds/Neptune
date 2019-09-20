@@ -140,7 +140,7 @@ private[spark] class TaskSetManager(
   // of failures.
   // Duplicates are handled in dequeueTaskFromList, which ensures that a
   // task hasn't already started running before launching it.
-  private val pendingTasksForExecutor = new HashMap[String, ArrayBuffer[Int]]
+  private[scheduler] val pendingTasksForExecutor = new HashMap[String, ArrayBuffer[Int]]
 
   // Set of pending tasks for each host. Similar to pendingTasksForExecutor,
   // but at host level.
@@ -153,7 +153,7 @@ private[spark] class TaskSetManager(
   private[scheduler] var pendingTasksWithNoPrefs = new ArrayBuffer[Int]
 
   // Set containing all pending tasks (also used as a stack, as above).
-  private val allPendingTasks = new ArrayBuffer[Int]
+  private var allPendingTasks = new ArrayBuffer[Int]
 
   // Tasks that can be speculated. Since these will be a small fraction of total
   // tasks, we'll just hold them in a HashSet.
@@ -249,7 +249,7 @@ private[spark] class TaskSetManager(
    * Return the pending tasks list for a given executor ID, or an empty list if
    * there is no map entry for that host
    */
-  private def getPendingTasksForExecutor(executorId: String): ArrayBuffer[Int] = {
+  private[spark] def getPendingTasksForExecutor(executorId: String): ArrayBuffer[Int] = {
     pendingTasksForExecutor.getOrElse(executorId, ArrayBuffer())
   }
 
@@ -1093,6 +1093,19 @@ private[spark] class TaskSetManager(
 
   def executorAdded() {
     recomputeLocality()
+  }
+
+  def recomputePendingLists(): Unit = {
+    pendingTasksForExecutor.empty
+    pendingTasksForHost.empty
+    pendingTasksForRack.empty
+    pendingTasksWithNoPrefs = new ArrayBuffer[Int]
+    val previouslyPendingTasks = allPendingTasks.clone()
+    allPendingTasks = new ArrayBuffer[Int]
+
+    for (index <- previouslyPendingTasks) {
+      addPendingTask(index)
+    }
   }
 }
 

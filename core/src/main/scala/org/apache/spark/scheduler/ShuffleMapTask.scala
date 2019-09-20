@@ -76,8 +76,13 @@ private[spark] class ShuffleMapTask(
     this(0, 0, null, new Partition { override def index: Int = 0 }, null, new Properties, null)
   }
 
-  @transient private val preferredLocs: Seq[TaskLocation] = {
+  @transient private var preferredLocs: Seq[TaskLocation] = {
     if (locs == null) Nil else locs.toSet.toSeq
+  }
+
+  override def addPreferredLocation(taskLocation: TaskLocation): Unit = {
+    locs = taskLocation +: locs
+    preferredLocs = if (locs == null) Nil else locs.toSet.toSeq
   }
 
   override def runTask(context: TaskContext): MapStatus = {

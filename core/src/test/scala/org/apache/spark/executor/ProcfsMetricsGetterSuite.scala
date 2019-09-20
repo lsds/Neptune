@@ -15,11 +15,27 @@
  * limitations under the License.
  */
 
-package org.apache.spark
+package org.apache.spark.executor
 
-private[spark] object NeptunePolicy extends Enumeration {
+import org.apache.spark.SparkFunSuite
 
-  val RANDOM, LOAD_BALANCE, CACHE_LOCAL_BALANCE, CACHE_BUCKET_BALANCE, LOCATION_MEMORY_AWARE = Value
 
-  type NeptunePolicy = Value
+class ProcfsMetricsGetterSuite extends SparkFunSuite {
+
+  val p = new ProcfsMetricsGetter(getTestResourcePath("ProcfsMetrics"))
+
+  test("testGetProcessInfo") {
+    var r = ProcfsMetrics(0, 0, 0, 0, 0, 0)
+    r = p.addProcfsMetricsFromOneProcess(r, 26109)
+    assert(r.jvmVmemTotal == 4769947648L)
+    assert(r.jvmRSSTotal == 262610944)
+    assert(r.pythonVmemTotal == 0)
+    assert(r.pythonRSSTotal == 0)
+
+    r = p.addProcfsMetricsFromOneProcess(r, 22763)
+    assert(r.pythonVmemTotal == 360595456)
+    assert(r.pythonRSSTotal == 7831552)
+    assert(r.jvmVmemTotal == 4769947648L)
+    assert(r.jvmRSSTotal == 262610944)
+  }
 }

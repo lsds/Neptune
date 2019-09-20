@@ -25,14 +25,13 @@ import scala.collection.mutable.HashMap
 import com.google.common.collect.Interners
 
 import org.apache.spark.JobExecutionStatus
-import org.apache.spark.executor.TaskMetrics
+import org.apache.spark.executor.{ExecutorMetrics, TaskMetrics}
 import org.apache.spark.scheduler.{AccumulableInfo, StageInfo, TaskInfo}
 import org.apache.spark.status.api.v1
 import org.apache.spark.storage.RDDInfo
 import org.apache.spark.ui.SparkUI
 import org.apache.spark.util.AccumulatorContext
 import org.apache.spark.util.collection.OpenHashSet
-import org.apache.spark.util.kvstore.KVStore
 
 /**
  * A mutable representation of a live entity in Spark (jobs, stages, tasks, et al). Every live
@@ -270,6 +269,9 @@ private class LiveExecutor(val executorId: String, _addTime: Long) extends LiveE
 
   def hasMemoryInfo: Boolean = totalOnHeap >= 0L
 
+  // peak values for executor level metrics
+  val peakExecutorMetrics = new ExecutorMetrics()
+
   def hostname: String = if (host != null) host else hostPort.split(":")(0)
 
   override protected def doUpdate(): Any = {
@@ -303,7 +305,8 @@ private class LiveExecutor(val executorId: String, _addTime: Long) extends LiveE
       Option(removeTime),
       Option(removeReason),
       executorLogs,
-      memoryMetrics)
+      memoryMetrics,
+      Some(peakExecutorMetrics).filter(_.isSet))
     new ExecutorSummaryWrapper(info)
   }
 

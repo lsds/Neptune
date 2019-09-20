@@ -493,9 +493,56 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
       case Some("cl") => NeptunePolicy.CACHE_LOCAL_BALANCE
       case Some("cache_local_balance") => NeptunePolicy.CACHE_LOCAL_BALANCE
       case Some("clb") => NeptunePolicy.CACHE_LOCAL_BALANCE
-      case Some("cache_memory_balance") => NeptunePolicy.CACHE_MEMORY_BALANCE
-      case Some("cmb") => NeptunePolicy.CACHE_MEMORY_BALANCE
+      case Some("location_memory_aware") => NeptunePolicy.LOCATION_MEMORY_AWARE
+      case Some("lma") => NeptunePolicy.LOCATION_MEMORY_AWARE
+      case Some("cache_bucket_balance") => NeptunePolicy.CACHE_BUCKET_BALANCE
+      case Some("cbb") => NeptunePolicy.CACHE_BUCKET_BALANCE
       case _ => NeptunePolicy.LOAD_BALANCE
+    }
+  }
+
+  def setLMAWindowSize(windowSize: Int): Unit = {
+    set("spark.neptune.lma.window", windowSize.toString)
+  }
+
+  def getLMAWindowSize(): Int = {
+    getOption("spark.neptune.lma.window") match {
+      case Some(string) => string.toInt
+      case _ => 1
+    }
+  }
+
+  def setLMABucketSizePercentage(bucketSizePercentage: Int): Unit = {
+    set("spark.neptune.lma.bucket.percentage", bucketSizePercentage.toString)
+  }
+
+  def getLMABucketSizePercentage(): Int = {
+    getOption("spark.neptune.lma.bucket.percentage") match {
+      case Some(string) => string.toInt
+      case _ => 1
+    }
+  }
+
+  def setLMABucketSizeMB(bucketSizeMB: Int): Unit = {
+    set("spark.neptune.lma.bucket.mb", bucketSizeMB.toString)
+  }
+
+  def getLMABucketSizeMB(): Int = {
+    getOption("spark.neptune.lma.bucket.mb") match {
+      case Some(string) => string.toInt
+      case _ => 1
+    }
+  }
+
+  def setLMAIgnore(toIgnore: Boolean): Unit = {
+    set("spark.neptune.lma.missing.ignore", toIgnore.toString)
+  }
+
+  def getLMAMissingIgnore(): Boolean = {
+    getOption("spark.neptune.lma.missing.ignore") match {
+      case Some("true") => true
+      case Some("false") => false
+      case _ => false
     }
   }
 

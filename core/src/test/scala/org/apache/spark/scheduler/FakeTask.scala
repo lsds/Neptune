@@ -25,13 +25,16 @@ import org.apache.spark.executor.TaskMetrics
 class FakeTask(
     stageId: Int,
     partitionId: Int,
-    prefLocs: Seq[TaskLocation] = Nil,
+    var prefLocs: Seq[TaskLocation] = Nil,
     serializedTaskMetrics: Array[Byte] =
       SparkEnv.get.closureSerializer.newInstance().serialize(TaskMetrics.registered).array())
   extends Task[Int](stageId, 0, partitionId, new Properties, serializedTaskMetrics) {
 
   override def runTask(context: TaskContext): Int = 0
   override def preferredLocations: Seq[TaskLocation] = prefLocs
+  override def addPreferredLocation(taskLocation: TaskLocation): Unit = {
+    prefLocs = taskLocation +: prefLocs
+  }
 }
 
 object FakeTask {

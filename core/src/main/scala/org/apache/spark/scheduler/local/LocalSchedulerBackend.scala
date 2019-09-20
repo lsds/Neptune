@@ -109,6 +109,9 @@ private[spark] class LocalEndpoint(
 
     case ResumeTask(taskId) =>
       if (executor.resumeTask(taskId)) {
+        // scalastyle:off println
+        System.err.println(s"Actually Resumed TASK ${taskId}")
+        // scalastyle:on println
         if (!scheduler.sc.conf.isNeptuneManualSchedulingEnabled()) {
           freeCores -= scheduler.CPUS_PER_TASK
           executorBackend.executorDataMap.get(localExecutorId) match {
@@ -118,6 +121,8 @@ private[spark] class LocalEndpoint(
               logWarning(s"Attempted to resume unknown executor ${localExecutorId}")
           }
         }
+//      } else {
+//        reviveOffers()
       }
   }
 

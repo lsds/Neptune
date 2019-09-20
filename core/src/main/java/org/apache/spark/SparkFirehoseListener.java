@@ -110,6 +110,12 @@ public class SparkFirehoseListener implements SparkListenerInterface {
   }
 
   @Override
+  public final void onStageExecutorMetrics(
+          SparkListenerStageExecutorMetrics executorMetrics) {
+    onEvent(executorMetrics);
+  }
+
+  @Override
   public final void onExecutorAdded(SparkListenerExecutorAdded executorAdded) {
     onEvent(executorAdded);
   }

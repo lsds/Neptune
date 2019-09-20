@@ -56,7 +56,7 @@ private[spark] class ResultTask[T, U](
     stageAttemptId: Int,
     taskBinary: Broadcast[Array[Byte]],
     partition: Partition,
-    locs: Seq[TaskLocation],
+    var locs: Seq[TaskLocation],
     val outputId: Int,
     localProperties: Properties,
     serializedTaskMetrics: Array[Byte],
@@ -69,8 +69,13 @@ private[spark] class ResultTask[T, U](
     jobId, appId, appAttemptId, isPausable, isCoroutine)
   with Serializable {
 
-  @transient private[this] val preferredLocs: Seq[TaskLocation] = {
+  @transient private[this] var preferredLocs: Seq[TaskLocation] = {
     if (locs == null) Nil else locs.toSet.toSeq
+  }
+
+  override def addPreferredLocation(taskLocation: TaskLocation): Unit = {
+    locs = taskLocation +: locs
+    preferredLocs = if (locs == null) Nil else locs.toSet.toSeq
   }
 
   override def runTask(context: TaskContext): U = {

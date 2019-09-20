@@ -175,6 +175,8 @@ private[spark] abstract class Task[T](
 
   def preferredLocations: Seq[TaskLocation] = Nil
 
+  def addPreferredLocation(taskLocation: TaskLocation): Unit = { }
+
   // Map output tracker epoch. Will be set by TaskSetManager.
   var epoch: Long = -1
 

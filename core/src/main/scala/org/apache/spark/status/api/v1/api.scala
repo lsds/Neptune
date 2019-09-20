@@ -20,8 +20,13 @@ import java.lang.{Long => JLong}
 import java.util.Date
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize
+import com.fasterxml.jackson.core.{JsonGenerator, JsonParser}
+import com.fasterxml.jackson.core.`type`.TypeReference
+import com.fasterxml.jackson.databind.{DeserializationContext, JsonDeserializer, JsonSerializer, SerializerProvider}
+import com.fasterxml.jackson.databind.annotation.{JsonDeserialize, JsonSerialize}
 import org.apache.spark.JobExecutionStatus
+import org.apache.spark.executor.ExecutorMetrics
+import org.apache.spark.metrics.ExecutorMetricType
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -95,13 +100,44 @@ class ExecutorSummary private[spark](
     val removeTime: Option[Date],
     val removeReason: Option[String],
     val executorLogs: Map[String, String],
-    val memoryMetrics: Option[MemoryMetrics])
+    val memoryMetrics: Option[MemoryMetrics],
+    @JsonSerialize(using = classOf[ExecutorMetricsJsonSerializer])
+    @JsonDeserialize(using = classOf[ExecutorMetricsJsonDeserializer])
+    val peakMemoryMetrics: Option[ExecutorMetrics])
 
 class MemoryMetrics private[spark](
     val usedOnHeapStorageMemory: Long,
     val usedOffHeapStorageMemory: Long,
     val totalOnHeapStorageMemory: Long,
     val totalOffHeapStorageMemory: Long)
+
+/** deserializer for peakMemoryMetrics: convert map to ExecutorMetrics */
+private[spark] class ExecutorMetricsJsonDeserializer
+  extends JsonDeserializer[Option[ExecutorMetrics]] {
+  override def deserialize(
+                            jsonParser: JsonParser,
+                            deserializationContext: DeserializationContext): Option[ExecutorMetrics] = {
+    val metricsMap = jsonParser.readValueAs[Option[Map[String, Long]]](
+      new TypeReference[Option[Map[String, java.lang.Long]]] {})
+    metricsMap.map(metrics => new ExecutorMetrics(metrics))
+  }
+}
+
+/** serializer for peakMemoryMetrics: convert ExecutorMetrics to map with metric name as key */
+private[spark] class ExecutorMetricsJsonSerializer
+  extends JsonSerializer[Option[ExecutorMetrics]] {
+  override def serialize(
+                          metrics: Option[ExecutorMetrics],
+                          jsonGenerator: JsonGenerator,
+                          serializerProvider: SerializerProvider): Unit = {
+    metrics.foreach { m: ExecutorMetrics =>
+      val metricsMap = ExecutorMetricType.metricToOffset.map { case (metric, _) =>
+        metric -> m.getMetricValue(metric)
+      }
+      jsonGenerator.writeObject(metricsMap)
+    }
+  }
+}
 
 class JobData private[spark](
     val jobId: Int,
