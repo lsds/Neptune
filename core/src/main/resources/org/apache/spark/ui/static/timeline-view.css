@@ -25,7 +25,7 @@ div#application-timeline, div#job-timeline {
 }
 
 #task-assignment-timeline div.legend-area {
-  width: 574px;
+  width: 740px;
 }
 
 #task-assignment-timeline .legend-area > svg {
@@ -51,6 +51,11 @@ div#application-timeline, div#job-timeline {
   height: 26px;
 }
 
+rect.queuing-latency-proportion {
+  fill: #FF69B4;
+  stroke: #CC5490;
+}
+
 rect.scheduler-delay-proportion {
   fill: #80B1D3;
   stroke: #6B94B0;
@@ -69,6 +74,16 @@ rect.shuffle-read-time-proportion {
 rect.executor-runtime-proportion {
   fill: #B3DE69;
   stroke: #95B957;
+}
+
+rect.runtime-proportion {
+  fill: #228B22;
+  stroke: #1E7D1E;
+}
+
+rect.paused-proportion {
+  fill: #DC143C;
+  stroke: #BB0A1E;
 }
 
 rect.shuffle-write-time-proportion {

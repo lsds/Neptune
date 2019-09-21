@@ -24,6 +24,8 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.storage.{RDDBlockId, StorageLevel}
 import org.apache.spark.util.Utils
 
+import org.coroutines.{coroutine, yieldval, ~>}
+
 /**
  * An implementation of checkpointing implemented on top of Spark's caching layer.
  *
@@ -51,7 +53,35 @@ private[spark] class LocalRDDCheckpointData[T: ClassTag](@transient private val 
       !SparkEnv.get.blockManager.master.contains(RDDBlockId(rdd.id, i))
     }
     if (missingPartitionIndices.nonEmpty) {
-      rdd.sparkContext.runJob(rdd, action, missingPartitionIndices)
+      if (rdd.conf.isNeptuneCoroutinesEnabled()) {
+        val toIteratorSizeCoFunc: (TaskContext, Iterator[T]) ~> (Int, Long) =
+          coroutine { (context: TaskContext, itr: Iterator[T]) => {
+            var count = 0L
+            while (itr.hasNext) {
+              if (context.isPaused()) {
+                yieldval(0)
+              }
+              count += 1L
+              itr.next()
+            }
+            count
+          }
+         }
+        rdd.sparkContext.runJob(rdd, toIteratorSizeCoFunc, missingPartitionIndices)
+      } else if (rdd.conf.isNeptuneThreadSyncEnabled()) {
+        val toIteratorSizeThreadSync = (context: TaskContext, itr: Iterator[T]) => {
+          var count = 0L
+          while (itr.hasNext) {
+            rdd.checkSuspend(context)
+            count += 1L
+            itr.next()
+          }
+          count
+        }
+        rdd.sparkContext.runJob(rdd, toIteratorSizeThreadSync, missingPartitionIndices)
+      } else {
+        rdd.sparkContext.runJob(rdd, action, missingPartitionIndices)
+      }
     }
 
     new LocalCheckpointRDD[T](rdd)

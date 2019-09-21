@@ -34,7 +34,7 @@ import org.apache.commons.lang3.SerializationUtils
 
 import org.apache.spark._
 import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.executor.TaskMetrics
+import org.apache.spark.executor.{ExecutorMetrics, TaskMetrics}
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config
 import org.apache.spark.network.util.JavaUtils
@@ -44,6 +44,8 @@ import org.apache.spark.rpc.RpcTimeout
 import org.apache.spark.storage._
 import org.apache.spark.storage.BlockManagerMessages.BlockManagerHeartbeat
 import org.apache.spark.util._
+
+import org.coroutines.~>
 
 /**
  * The high-level scheduling layer that implements stage-oriented scheduling. It computes a DAG of
@@ -217,6 +219,20 @@ class DAGScheduler(
   }
 
   /**
+   * ::Neptune:: Called by the TaskSetManager to report task is paused.
+   */
+  def taskPaused(task: Task[_], taskInfo: TaskInfo): Unit = {
+    eventProcessLoop.post(PauseEvent(task, taskInfo))
+  }
+
+  /**
+   * ::Neptune:: Called by the TaskSetManager to report task is resumed.
+   */
+  def taskResumed(task: Task[_], taskInfo: TaskInfo): Unit = {
+    eventProcessLoop.post(ResumeEvent(task, taskInfo))
+  }
+
+  /**
    * Called by the TaskSetManager to report that a task has completed
    * and results are being fetched remotely.
    */
@@ -246,8 +262,11 @@ class DAGScheduler(
       execId: String,
       // (taskId, stageId, stageAttemptId, accumUpdates)
       accumUpdates: Array[(Long, Int, Int, Seq[AccumulableInfo])],
-      blockManagerId: BlockManagerId): Boolean = {
-    listenerBus.post(SparkListenerExecutorMetricsUpdate(execId, accumUpdates))
+      blockManagerId: BlockManagerId,
+      // executor metrics indexed by ExecutorMetricType.values
+      executorUpdates: ExecutorMetrics): Boolean = {
+    listenerBus.post(SparkListenerExecutorMetricsUpdate(execId, accumUpdates,
+      Some(executorUpdates)))
     blockManagerMaster.driverEndpoint.askSync[Boolean](
       BlockManagerHeartbeat(blockManagerId), new RpcTimeout(600 seconds, "BlockManagerHeartbeat"))
   }
@@ -608,6 +627,53 @@ class DAGScheduler(
   }
 
   /**
+   * ::Neptune::
+   * Submit an action job to the scheduler that will run as a Coroutine Task
+   *
+   * @param rdd target RDD to run tasks on
+   * @param func a coroutine function to run on each partition of the RDD
+   * @param partitions set of partitions to run on; some jobs may not want to compute on all
+   *   partitions of the target RDD, e.g. for operations like first()
+   * @param callSite where in the user program this job was called
+   * @param resultHandler callback to pass each result to
+   * @param properties scheduler properties to attach to this job, e.g. fair scheduler pool name
+   *
+   * @return a JobWaiter object that can be used to block until the job finishes executing
+   *         or can be used to cancel the job.
+   *
+   * @throws IllegalArgumentException when partitions ids are illegal
+   */
+  def submitCoroutineJob[T, U](
+                       rdd: RDD[T],
+                       func: (TaskContext, Iterator[T]) ~> (Int, U),
+                       partitions: Seq[Int],
+                       callSite: CallSite,
+                       resultHandler: (Int, U) => Unit,
+                       properties: Properties): JobWaiter[U] = {
+    // Check to make sure we are not launching a task on a partition that does not exist.
+    val maxPartitions = rdd.partitions.length
+    partitions.find(p => p >= maxPartitions || p < 0).foreach { p =>
+      throw new IllegalArgumentException(
+        "Attempting to access a non-existent partition: " + p + ". " +
+          "Total number of partitions: " + maxPartitions)
+    }
+
+    val jobId = nextJobId.getAndIncrement()
+    if (partitions.size == 0) {
+      // Return immediately if the job is running 0 tasks
+      return new JobWaiter[U](this, jobId, 0, resultHandler)
+    }
+
+    assert(partitions.size > 0)
+    val func2 = func.asInstanceOf[(TaskContext, Iterator[_]) ~> (_, _)]
+    val waiter = new JobWaiter(this, jobId, partitions.size, resultHandler)
+    eventProcessLoop.post(CoroutineJobSubmitted(
+      jobId, rdd, func2, partitions.toArray, callSite, waiter,
+      SerializationUtils.clone(properties)))
+    waiter
+  }
+
+  /**
    * Run an action job on the given RDD and pass all the results to the resultHandler function as
    * they arrive.
    *
@@ -638,6 +704,44 @@ class DAGScheduler(
       case scala.util.Failure(exception) =>
         logInfo("Job %d failed: %s, took %f s".format
           (waiter.jobId, callSite.shortForm, (System.nanoTime - start) / 1e9))
+        // SPARK-8644: Include user stack trace in exceptions coming from DAGScheduler.
+        val callerStackTrace = Thread.currentThread().getStackTrace.tail
+        exception.setStackTrace(exception.getStackTrace ++ callerStackTrace)
+        throw exception
+    }
+  }
+
+  /**
+   * Run an action coroutine job on the given RDD and pass all the results to the resultHandler function as
+   * they arrive.
+   *
+   * @param rdd target RDD to run tasks on
+   * @param func a coroutine function to run on each partition of the RDD
+   * @param partitions set of partitions to run on; some jobs may not want to compute on all
+   *   partitions of the target RDD, e.g. for operations like first()
+   * @param callSite where in the user program this job was called
+   * @param resultHandler callback to pass each result to
+   * @param properties scheduler properties to attach to this job, e.g. fair scheduler pool name
+   *
+   * @note Throws `Exception` when the job fails
+   */
+  def runCoroutineJob[T, U](
+                    rdd: RDD[T],
+                    func: (TaskContext, Iterator[T]) ~> (Int, U),
+                    partitions: Seq[Int],
+                    callSite: CallSite,
+                    resultHandler: (Int, U) => Unit,
+                    properties: Properties): Unit = {
+    val start = System.nanoTime
+    val waiter = submitCoroutineJob(rdd, func, partitions, callSite, resultHandler, properties)
+    ThreadUtils.awaitReady(waiter.completionFuture, Duration.Inf)
+    waiter.completionFuture.value.get match {
+      case scala.util.Success(_) =>
+        logInfo("Coroutine Job %d finished: %s, took %f s".format
+        (waiter.jobId, callSite.shortForm, (System.nanoTime - start) / 1e9))
+      case scala.util.Failure(exception) =>
+        logInfo("Coroutine Job %d failed: %s, took %f s".format
+        (waiter.jobId, callSite.shortForm, (System.nanoTime - start) / 1e9))
         // SPARK-8644: Include user stack trace in exceptions coming from DAGScheduler.
         val callerStackTrace = Thread.currentThread().getStackTrace.tail
         exception.setStackTrace(exception.getStackTrace ++ callerStackTrace)
@@ -755,6 +859,24 @@ class DAGScheduler(
   }
 
   /**
+   * Pause given coroutine-task. It will be retrieved
+   *
+   * @return Whether the task was successfully paused
+   */
+  def pauseTaskAttempt(taskId: Long, interruptThread: Boolean): Boolean = {
+    taskScheduler.pauseTaskAttempt(taskId, interruptThread)
+  }
+
+  /**
+   * Resume given coroutine-task. It will be retrieved
+   *
+   * @return Whether the task was successfully resumed
+   */
+  def resumeTaskAttempt(taskId: Long): Boolean = {
+    taskScheduler.resumeTaskAttempt(taskId)
+  }
+
+  /**
    * Resubmit any failed stages. Ordinarily called after a small amount of time has passed since
    * the last fetch failure.
    */
@@ -817,7 +939,20 @@ class DAGScheduler(
     // In that case, we wouldn't have the stage anymore in stageIdToStage.
     val stageAttemptId =
       stageIdToStage.get(task.stageId).map(_.latestInfo.attemptNumber).getOrElse(-1)
-    listenerBus.post(SparkListenerTaskStart(task.stageId, stageAttemptId, taskInfo))
+    val stage: Stage = stageIdToStage.get(task.stageId).get
+    listenerBus.post(SparkListenerTaskStart(task.stageId, stageAttemptId, taskInfo, stage + "", stage.rdd + ""))
+  }
+
+  private[scheduler] def handlePauseEvent(task: Task[_], taskInfo: TaskInfo): Unit = {
+    val stageAttemptId =
+      stageIdToStage.get(task.stageId).map(_.latestInfo.attemptNumber).getOrElse(-1)
+    listenerBus.post(SparkListenerTaskPaused(task.stageId, stageAttemptId, taskInfo))
+  }
+
+  private[scheduler] def handleResumeEvent(task: Task[_], taskInfo: TaskInfo): Unit = {
+    val stageAttemptId =
+      stageIdToStage.get(task.stageId).map(_.latestInfo.attemptNumber).getOrElse(-1)
+    listenerBus.post(SparkListenerTaskResumed(task.stageId, stageAttemptId, taskInfo))
   }
 
   private[scheduler] def handleSpeculativeTaskSubmitted(task: Task[_]): Unit = {
@@ -875,6 +1010,48 @@ class DAGScheduler(
     val job = new ActiveJob(jobId, finalStage, callSite, listener, properties)
     clearCacheLocs()
     logInfo("Got job %s (%s) with %d output partitions".format(
+      job.jobId, callSite.shortForm, partitions.length))
+    logInfo("Final stage: " + finalStage + " (" + finalStage.name + ")")
+    logInfo("Parents of final stage: " + finalStage.parents)
+    logInfo("Missing parents: " + getMissingParentStages(finalStage))
+
+    val jobSubmissionTime = clock.getTimeMillis()
+    jobIdToActiveJob(jobId) = job
+    activeJobs += job
+    finalStage.setActiveJob(job)
+    val stageIds = jobIdToStageIds(jobId).toArray
+    val stageInfos = stageIds.flatMap(id => stageIdToStage.get(id).map(_.latestInfo))
+    listenerBus.post(
+      SparkListenerJobStart(job.jobId, jobSubmissionTime, stageInfos, properties))
+    submitStage(finalStage)
+  }
+
+  private[scheduler] def handleCoroutineJobSubmitted(jobId: Int,
+      finalRDD: RDD[_],
+      coFunc: (TaskContext, Iterator[_]) ~> (_, _),
+      partitions: Array[Int],
+      callSite: CallSite,
+      listener: JobListener,
+      properties: Properties): Unit = {
+    var finalStage: ResultStage = null
+    try {
+      // New stage creation may throw an exception if, for example, jobs are run on a
+      // HadoopRDD whose underlying HDFS files have been deleted.
+      val parents = getOrCreateParentStages(finalRDD, jobId)
+      val id = nextStageId.getAndIncrement()
+      finalStage = new ResultStage(id, finalRDD, null, partitions, parents, jobId, callSite, coFunc)
+      stageIdToStage(id) = finalStage
+      updateJobIdStageIdMaps(jobId, finalStage)
+    } catch {
+      case e: Exception =>
+        logWarning("Creating new stage failed due to exception - job: " + jobId, e)
+        listener.jobFailed(e)
+        return
+    }
+
+    val job = new ActiveJob(jobId, finalStage, callSite, listener, properties)
+    clearCacheLocs()
+    logInfo("Got Coroutine job %s (%s) with %d output partitions".format(
       job.jobId, callSite.shortForm, partitions.length))
     logInfo("Final stage: " + finalStage + " (" + finalStage.name + ")")
     logInfo("Parents of final stage: " + finalStage.parents)
@@ -1024,7 +1201,12 @@ class DAGScheduler(
           JavaUtils.bufferToArray(
             closureSerializer.serialize((stage.rdd, stage.shuffleDep): AnyRef))
         case stage: ResultStage =>
-          JavaUtils.bufferToArray(closureSerializer.serialize((stage.rdd, stage.func): AnyRef))
+          if (stage.func != null) {
+            JavaUtils.bufferToArray(closureSerializer.serialize((stage.rdd, stage.func): AnyRef))
+          }
+          else {
+            JavaUtils.bufferToArray(closureSerializer.serialize((stage.rdd, stage.coFunc): AnyRef))
+          }
       }
 
       taskBinary = sc.broadcast(taskBinaryBytes)
@@ -1053,7 +1235,8 @@ class DAGScheduler(
             stage.pendingPartitions += id
             new ShuffleMapTask(stage.id, stage.latestInfo.attemptNumber,
               taskBinary, part, locs, properties, serializedTaskMetrics, Option(jobId),
-              Option(sc.applicationId), sc.applicationAttemptId)
+              Option(sc.applicationId), sc.applicationAttemptId, sc.getConf.isNeptuneSuspensionEnabled(),
+              sc.getConf.isNeptuneCoroutinesEnabled())
           }
 
         case stage: ResultStage =>
@@ -1063,7 +1246,9 @@ class DAGScheduler(
             val locs = taskIdToLocations(id)
             new ResultTask(stage.id, stage.latestInfo.attemptNumber,
               taskBinary, part, locs, id, properties, serializedTaskMetrics,
-              Option(jobId), Option(sc.applicationId), sc.applicationAttemptId)
+              // Play it safe: stage.coFunc != null
+              Option(jobId), Option(sc.applicationId), sc.applicationAttemptId, sc.getConf.isNeptuneSuspensionEnabled(),
+              sc.getConf.isNeptuneCoroutinesEnabled())
           }
       }
     } catch {
@@ -1767,6 +1952,9 @@ private[scheduler] class DAGSchedulerEventProcessLoop(dagScheduler: DAGScheduler
     case JobSubmitted(jobId, rdd, func, partitions, callSite, listener, properties) =>
       dagScheduler.handleJobSubmitted(jobId, rdd, func, partitions, callSite, listener, properties)
 
+    case CoroutineJobSubmitted(jobId, rdd, func, partitions, callSite, listener, properties) =>
+      dagScheduler.handleCoroutineJobSubmitted(jobId, rdd, func, partitions, callSite, listener, properties)
+
     case MapStageSubmitted(jobId, dependency, callSite, listener, properties) =>
       dagScheduler.handleMapStageSubmitted(jobId, dependency, callSite, listener, properties)
 
@@ -1797,6 +1985,12 @@ private[scheduler] class DAGSchedulerEventProcessLoop(dagScheduler: DAGScheduler
 
     case BeginEvent(task, taskInfo) =>
       dagScheduler.handleBeginEvent(task, taskInfo)
+
+    case PauseEvent(task, taskInfo) =>
+      dagScheduler.handlePauseEvent(task, taskInfo)
+
+    case ResumeEvent(task, taskInfo) =>
+      dagScheduler.handleResumeEvent(task, taskInfo)
 
     case SpeculativeTaskSubmitted(task) =>
       dagScheduler.handleSpeculativeTaskSubmitted(task)

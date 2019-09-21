@@ -21,6 +21,8 @@ import org.apache.spark.TaskContext
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.CallSite
 
+import org.coroutines.~>
+
 /**
  * ResultStages apply a function on some partitions of an RDD to compute the result of an action.
  * The ResultStage object captures the function to execute, `func`, which will be applied to each
@@ -34,7 +36,9 @@ private[spark] class ResultStage(
     val partitions: Array[Int],
     parents: List[Stage],
     firstJobId: Int,
-    callSite: CallSite)
+    callSite: CallSite,
+    /** Neptune: optional coroutine function */
+    val coFunc: (TaskContext, Iterator[_]) ~> (_, _) = null)
   extends Stage(id, rdd, partitions.length, parents, firstJobId, callSite) {
 
   /**

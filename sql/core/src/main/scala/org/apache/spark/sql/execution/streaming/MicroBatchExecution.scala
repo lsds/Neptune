@@ -50,6 +50,7 @@ class MicroBatchExecution(
     trigger, triggerClock, outputMode, deleteCheckpointOnStop) {
 
   @volatile protected var sources: Seq[BaseStreamingSource] = Seq.empty
+//  @volatile var aq = new AdaptiveQueue[Int](5)
 
   private val triggerExecutor = trigger match {
     case t: ProcessingTime => ProcessingTimeExecutor(t, triggerClock)
@@ -129,6 +130,7 @@ class MicroBatchExecution(
           if (dataAvailable) {
             currentStatus = currentStatus.copy(isDataAvailable = true)
             updateStatusMessage("Processing new data")
+            // Change to adaptive
             runBatch(sparkSessionForStream)
           }
         }
@@ -212,6 +214,7 @@ class MicroBatchExecution(
               availableOffsets.foreach {
                 case (source: Source, end: Offset) =>
                   val start = committedOffsets.get(source)
+                  // One call Here - probably not needed (?)
                   source.getBatch(start, end)
                 case nonV1Tuple =>
                   // The V2 API does not have the same edge case requiring getBatch to be called

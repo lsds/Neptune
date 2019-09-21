@@ -22,6 +22,26 @@ Spark is built using [Apache Maven](http://maven.apache.org/).
 To build Spark and its example programs, run:
 
     build/mvn -DskipTests clean package
+    build/mvn package -DskipTests -pl core
+
+To install
+
+    build/mvn -DskipTests install
+
+To bump version
+
+    mvn versions:set -DnewVersion=2.4.0-Neptune
+
+To package
+
+    ./dev/make-distribution.sh --tgz -Phadoop-2.7
+
+Continuous compilation (core package)
+    
+    $ ./build/mvn install
+    $ cd core
+    $ ../build/mvn scala:cc
+
 
 (You do not need to do this if you downloaded a pre-built package.)
 

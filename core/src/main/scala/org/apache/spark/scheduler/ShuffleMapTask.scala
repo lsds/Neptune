@@ -27,7 +27,11 @@ import org.apache.spark._
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
-import org.apache.spark.shuffle.ShuffleWriter
+import org.apache.spark.scheduler.ShuffleMapTask.ShuffleCoroutineDeps
+import org.apache.spark.shuffle._
+import org.apache.spark.shuffle.sort.{BypassMergeSortShuffleHandle, SerializedShuffleHandle, SortShuffleWriter}
+import org.coroutines.{call, coroutine, yieldval, ~>}
+import org.slf4j.Logger
 
 /**
  * A ShuffleMapTask divides the elements of an RDD into multiple buckets (based on a partitioner
@@ -60,9 +64,11 @@ private[spark] class ShuffleMapTask(
     serializedTaskMetrics: Array[Byte],
     jobId: Option[Int] = None,
     appId: Option[String] = None,
-    appAttemptId: Option[String] = None)
+    appAttemptId: Option[String] = None,
+    isPausable: Boolean = false,
+    isCoroutine: Boolean = false)
   extends Task[MapStatus](stageId, stageAttemptId, partition.index, localProperties,
-    serializedTaskMetrics, jobId, appId, appAttemptId)
+    serializedTaskMetrics, jobId, appId, appAttemptId, isPausable, isCoroutine)
   with Logging {
 
   /** A constructor used only in test suites. This does not require passing in an RDD. */
@@ -70,8 +76,13 @@ private[spark] class ShuffleMapTask(
     this(0, 0, null, new Partition { override def index: Int = 0 }, null, new Properties, null)
   }
 
-  @transient private val preferredLocs: Seq[TaskLocation] = {
+  @transient private var preferredLocs: Seq[TaskLocation] = {
     if (locs == null) Nil else locs.toSet.toSeq
+  }
+
+  override def addPreferredLocation(taskLocation: TaskLocation): Unit = {
+    locs = taskLocation +: locs
+    preferredLocs = if (locs == null) Nil else locs.toSet.toSeq
   }
 
   override def runTask(context: TaskContext): MapStatus = {
@@ -89,27 +100,64 @@ private[spark] class ShuffleMapTask(
       threadMXBean.getCurrentThreadCpuTime - deserializeStartCpuTime
     } else 0L
 
-    var writer: ShuffleWriter[Any, Any] = null
-    try {
+    if (!isCoroutine) {
       val manager = SparkEnv.get.shuffleManager
-      writer = manager.getWriter[Any, Any](dep.shuffleHandle, partitionId, context)
-      writer.write(rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]])
-      writer.stop(success = true).get
-    } catch {
-      case e: Exception =>
-        try {
-          if (writer != null) {
-            writer.stop(success = false)
+      val records = rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
+      var writer: ShuffleWriter[Any, Any] = null
+      try {
+        writer = manager.getWriter[Any, Any](dep.shuffleHandle, partitionId, context)
+        writer.write(records)
+        writer.stop(success = true).get
+      } catch {
+        case e: Exception =>
+          try {
+            if (writer != null) {
+              writer.stop(success = false)
+            }
+          } catch {
+            case e: Exception =>
+              log.debug("Could not stop writer", e)
           }
-        } catch {
-          case e: Exception =>
-            log.debug("Could not stop writer", e)
+          throw e
+      }
+    } else {
+      var mapStatus: MapStatus = null
+      val shuffleWriteCoFunc: (TaskContext, Any) ~> (Int, MapStatus) =
+        coroutine { (context: TaskContext, t: Any) => {
+          dep.shuffleHandle match {
+            case unsafeShuffleHandle: SerializedShuffleHandle[Any, Any] =>
+              log.error("HANDLE unsafeShuffleHandle NOT IMPLEMENTED!!!!")
+              throw new Exception("HANDLE unsafeShuffleHandle NOT IMPLEMENTED!!!!")
+            case bypassMergeSortHandle: BypassMergeSortShuffleHandle[Any, Any] =>
+              log.info("Using bypassMergeSortHandle Co")
+              mapStatus = SortShuffleWriter.bypassMergeSortShuffleWriter(context, ShuffleCoroutineDeps(rdd, dep, partition, partitionId, log))
+            case baseShuffleHandle: BaseShuffleHandle[Any, Any, Any] =>
+              log.info("Using SortShuffleWritter Co")
+              mapStatus = SortShuffleWriter.sortShuffleWriter(context, ShuffleCoroutineDeps(rdd, dep, partition, partitionId, log))
+          }
+          mapStatus
         }
-        throw e
+       }
+      if (context.getcoInstance() == null) {
+        val shuffleWriteCoFuncCast = shuffleWriteCoFunc.asInstanceOf[(TaskContext, Any) ~> (Any, Any)]
+        context.setCoInstance(call(shuffleWriteCoFuncCast(context, None.asInstanceOf[Any])))
+      }
+      // Run up to the next yield Point
+      if(!context.getcoInstance().isCompleted && context.getcoInstance().pull) {
+        return null
+      } else {
+        // Need to return the actual result used by the DAGScheduler
+        return mapStatus
+      }
     }
   }
 
   override def preferredLocations: Seq[TaskLocation] = preferredLocs
 
   override def toString: String = "ShuffleMapTask(%d, %d)".format(stageId, partitionId)
+}
+
+object ShuffleMapTask {
+  case class ShuffleCoroutineDeps(rdd: RDD[_], dep: ShuffleDependency[_, _, _], partition: Partition,
+                                  partitionId: Int, log: Logger)
 }

@@ -127,7 +127,7 @@ class RateSourceSuite extends StreamTest {
     val input = spark.readStream
       .format("rate")
       .option("rowsPerSecond", "10")
-      .option("numPartitions", "6")
+      .option("numPartitions", "3")
       .option("useManualClock", "true")
       .load()
       .select(spark_partition_id())

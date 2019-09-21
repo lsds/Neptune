@@ -28,9 +28,9 @@ import org.apache.spark.util.StatCounter
 class PartitioningSuite extends SparkFunSuite with SharedSparkContext with PrivateMethodTester {
 
   test("HashPartitioner equality") {
-    val p2 = new HashPartitioner(2)
-    val p4 = new HashPartitioner(4)
-    val anotherP4 = new HashPartitioner(4)
+    val p2 = new HashPartitioner(sc.conf, 2)
+    val p4 = new HashPartitioner(sc.conf, 4)
+    val anotherP4 = new HashPartitioner(sc.conf, 4)
     assert(p2 === p2)
     assert(p4 === p4)
     assert(p2 != p4)
@@ -160,7 +160,7 @@ class PartitioningSuite extends SparkFunSuite with SharedSparkContext with Priva
   test("HashPartitioner not equal to RangePartitioner") {
     val rdd = sc.parallelize(1 to 10).map(x => (x, x))
     val rangeP2 = new RangePartitioner(2, rdd)
-    val hashP2 = new HashPartitioner(2)
+    val hashP2 = new HashPartitioner(sc.conf, 2)
     assert(rangeP2 === rangeP2)
     assert(hashP2 === hashP2)
     assert(hashP2 !== rangeP2)
@@ -177,10 +177,10 @@ class PartitioningSuite extends SparkFunSuite with SharedSparkContext with Priva
 
     assert(rdd.partitioner === None)
 
-    assert(grouped2.partitioner === Some(new HashPartitioner(2)))
-    assert(grouped4.partitioner === Some(new HashPartitioner(4)))
-    assert(reduced2.partitioner === Some(new HashPartitioner(2)))
-    assert(reduced4.partitioner === Some(new HashPartitioner(4)))
+    assert(grouped2.partitioner === Some(new HashPartitioner(sc.conf, 2)))
+    assert(grouped4.partitioner === Some(new HashPartitioner(sc.conf, 4)))
+    assert(reduced2.partitioner === Some(new HashPartitioner(sc.conf, 2)))
+    assert(reduced4.partitioner === Some(new HashPartitioner(sc.conf, 4)))
 
     assert(grouped2.groupByKey().partitioner  === grouped2.partitioner)
     assert(grouped2.groupByKey(3).partitioner !=  grouped2.partitioner)
@@ -219,7 +219,7 @@ class PartitioningSuite extends SparkFunSuite with SharedSparkContext with Priva
     verify(arrs.distinct())
     // We can't catch all usages of arrays, since they might occur inside other collections:
     // assert(fails { arrPairs.distinct() })
-    verify(arrPairs.partitionBy(new HashPartitioner(2)))
+    verify(arrPairs.partitionBy(new HashPartitioner(sc.conf, 2)))
     verify(arrPairs.join(arrPairs))
     verify(arrPairs.leftOuterJoin(arrPairs))
     verify(arrPairs.rightOuterJoin(arrPairs))
@@ -263,11 +263,11 @@ class PartitioningSuite extends SparkFunSuite with SharedSparkContext with Priva
   test("defaultPartitioner") {
     val rdd1 = sc.parallelize((1 to 1000).map(x => (x, x)), 150)
     val rdd2 = sc.parallelize(Array((1, 2), (2, 3), (2, 4), (3, 4)))
-      .partitionBy(new HashPartitioner(10))
+      .partitionBy(new HashPartitioner(sc.conf, 10))
     val rdd3 = sc.parallelize(Array((1, 6), (7, 8), (3, 10), (5, 12), (13, 14)))
-      .partitionBy(new HashPartitioner(100))
+      .partitionBy(new HashPartitioner(sc.conf, 100))
     val rdd4 = sc.parallelize(Array((1, 2), (2, 3), (2, 4), (3, 4)))
-      .partitionBy(new HashPartitioner(9))
+      .partitionBy(new HashPartitioner(sc.conf, 9))
     val rdd5 = sc.parallelize((1 to 10).map(x => (x, x)), 11)
 
     val partitioner1 = Partitioner.defaultPartitioner(rdd1, rdd2)
@@ -290,14 +290,14 @@ class PartitioningSuite extends SparkFunSuite with SharedSparkContext with Priva
 
       val rdd1 = sc.parallelize((1 to 1000).map(x => (x, x)), 150)
       val rdd2 = sc.parallelize(Array((1, 2), (2, 3), (2, 4), (3, 4)))
-        .partitionBy(new HashPartitioner(10))
+        .partitionBy(new HashPartitioner(sc.conf, 10))
       val rdd3 = sc.parallelize(Array((1, 6), (7, 8), (3, 10), (5, 12), (13, 14)))
-        .partitionBy(new HashPartitioner(100))
+        .partitionBy(new HashPartitioner(sc.conf, 100))
       val rdd4 = sc.parallelize(Array((1, 2), (2, 3), (2, 4), (3, 4)))
-        .partitionBy(new HashPartitioner(9))
+        .partitionBy(new HashPartitioner(sc.conf, 9))
       val rdd5 = sc.parallelize((1 to 10).map(x => (x, x)), 11)
       val rdd6 = sc.parallelize(Array((1, 2), (2, 3), (2, 4), (3, 4)))
-        .partitionBy(new HashPartitioner(3))
+        .partitionBy(new HashPartitioner(sc.conf, 3))
 
       val partitioner1 = Partitioner.defaultPartitioner(rdd1, rdd2)
       val partitioner2 = Partitioner.defaultPartitioner(rdd2, rdd3)

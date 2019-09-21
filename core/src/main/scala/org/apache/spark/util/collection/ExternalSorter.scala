@@ -99,7 +99,7 @@ private[spark] class ExternalSorter[K, V, C](
 
   private val numPartitions = partitioner.map(_.numPartitions).getOrElse(1)
   private val shouldPartition = numPartitions > 1
-  private def getPartition(key: K): Int = {
+  def getPartition(key: K): Int = {
     if (shouldPartition) partitioner.get.getPartition(key) else 0
   }
 
@@ -107,6 +107,7 @@ private[spark] class ExternalSorter[K, V, C](
   private val diskBlockManager = blockManager.diskBlockManager
   private val serializerManager = SparkEnv.get.serializerManager
   private val serInstance = serializer.newInstance()
+  private val isSuspendable = (context.isPausable() && !context.isCoroutine())
 
   // Use getSizeAsKb (not bytes) to maintain backwards compatibility if no units are provided
   private val fileBufferSize = conf.getSizeAsKb("spark.shuffle.file.buffer", "32k").toInt * 1024
@@ -123,8 +124,8 @@ private[spark] class ExternalSorter[K, V, C](
   // Data structures to store in-memory objects before we spill. Depending on whether we have an
   // Aggregator set, we either put objects into an AppendOnlyMap where we combine them, or we
   // store them in an array buffer.
-  @volatile private var map = new PartitionedAppendOnlyMap[K, C]
-  @volatile private var buffer = new PartitionedPairBuffer[K, C]
+  @volatile var map = new PartitionedAppendOnlyMap[K, C]
+  @volatile var buffer = new PartitionedPairBuffer[K, C]
 
   // Total spilling statistics
   private var _diskBytesSpilled = 0L
@@ -159,6 +160,23 @@ private[spark] class ExternalSorter[K, V, C](
     }
   }
 
+  private def checkSuspend(): Unit = {
+    if (context.isPaused()) {
+      context.synchronized {
+        while (context.isPaused()) {
+          try {
+            context.setTaskPausedEndTime(System.nanoTime())
+            context.wait()
+          } catch {
+            case e: InterruptedException =>
+              logWarning("Suspendable Task interrupted")
+          }
+        }
+      }
+    }
+    context.setTaskResumedEndTime(System.nanoTime())
+  }
+
   // Information about a spilled file. Includes sizes in bytes of "batches" written by the
   // serializer as we periodically reset its stream, as well as number of elements in each
   // partition, used to efficiently keep track of partitions when merging.
@@ -189,6 +207,10 @@ private[spark] class ExternalSorter[K, V, C](
         if (hadValue) mergeValue(oldValue, kv._2) else createCombiner(kv._2)
       }
       while (records.hasNext) {
+        // Neptune notify suspension
+        if (this.isSuspendable) {
+          checkSuspend()
+        }
         addElementsRead()
         kv = records.next()
         map.changeValue((getPartition(kv._1), kv._1), update)
@@ -197,6 +219,10 @@ private[spark] class ExternalSorter[K, V, C](
     } else {
       // Stick values into our buffer
       while (records.hasNext) {
+        // Neptune notify suspension
+        if (this.isSuspendable) {
+          checkSuspend()
+        }
         addElementsRead()
         val kv = records.next()
         buffer.insert(getPartition(kv._1), kv._1, kv._2.asInstanceOf[C])
@@ -210,7 +236,7 @@ private[spark] class ExternalSorter[K, V, C](
    *
    * @param usingMap whether we're using a map or buffer as our current in-memory collection
    */
-  private def maybeSpillCollection(usingMap: Boolean): Unit = {
+  def maybeSpillCollection(usingMap: Boolean): Unit = {
     var estimatedSize = 0L
     if (usingMap) {
       estimatedSize = map.estimateSize()
@@ -293,6 +319,10 @@ private[spark] class ExternalSorter[K, V, C](
     var success = false
     try {
       while (inMemoryIterator.hasNext) {
+        // Neptune notify suspension
+        if (this.isSuspendable) {
+          checkSuspend()
+        }
         val partitionId = inMemoryIterator.nextPartition()
         require(partitionId >= 0 && partitionId < numPartitions,
           s"partition Id: ${partitionId} should be in the range [0, ${numPartitions})")
@@ -426,6 +456,10 @@ private[spark] class ExternalSorter[K, V, C](
           combiners += firstPair._2
           val key = firstPair._1
           while (sorted.hasNext && comparator.compare(sorted.head._1, key) == 0) {
+            // Neptune notify suspension
+            if (isSuspendable) {
+              checkSuspend()
+            }
             val pair = sorted.next()
             var i = 0
             var foundKey = false

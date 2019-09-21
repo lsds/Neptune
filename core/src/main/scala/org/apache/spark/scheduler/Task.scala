@@ -60,7 +60,9 @@ private[spark] abstract class Task[T](
       SparkEnv.get.closureSerializer.newInstance().serialize(TaskMetrics.registered).array(),
     val jobId: Option[Int] = None,
     val appId: Option[String] = None,
-    val appAttemptId: Option[String] = None) extends Serializable {
+    val appAttemptId: Option[String] = None,
+    @volatile var isPausable: Boolean = false,
+    @volatile var isCoroutine: Boolean = false) extends Serializable {
 
   @transient lazy val metrics: TaskMetrics =
     SparkEnv.get.closureSerializer.newInstance().deserialize(ByteBuffer.wrap(serializedTaskMetrics))
@@ -76,17 +78,23 @@ private[spark] abstract class Task[T](
       taskAttemptId: Long,
       attemptNumber: Int,
       metricsSystem: MetricsSystem): T = {
-    SparkEnv.get.blockManager.registerTask(taskAttemptId)
-    context = new TaskContextImpl(
-      stageId,
-      stageAttemptId, // stageAttemptId and stageAttemptNumber are semantically equal
-      partitionId,
-      taskAttemptId,
-      attemptNumber,
-      taskMemoryManager,
-      localProperties,
-      metricsSystem,
-      metrics)
+    // Pausable tasks may start/pause multiple times, avoid reinitialization
+    if (context == null) {
+      SparkEnv.get.blockManager.registerTask(taskAttemptId)
+      context = new TaskContextImpl(
+        stageId,
+        stageAttemptId, // stageAttemptId and stageAttemptNumber are semantically equal
+        partitionId,
+        taskAttemptId,
+        attemptNumber,
+        taskMemoryManager,
+        localProperties,
+        metricsSystem,
+        metrics,
+        isPausable,
+        isCoroutine)
+    }
+
     TaskContext.setTaskContext(context)
     taskThread = Thread.currentThread()
 
@@ -116,13 +124,19 @@ private[spark] abstract class Task[T](
           case t: Throwable =>
             e.addSuppressed(t)
         }
-        context.markTaskCompleted(Some(e))
+        // Neptune: RecordReaderIterator AutoCloseable (close) now depends on this completion event
+        // Neptune: Executor run finally clause also depends on this
+        if (!context.isPaused()) {
+          context.markTaskCompleted(Some(e))
+        }
         throw e
     } finally {
       try {
         // Call the task completion callbacks. If "markTaskCompleted" is called twice, the second
         // one is no-op.
-        context.markTaskCompleted(None)
+        if (!context.isPaused()) {
+          context.markTaskCompleted(None)
+        }
       } finally {
         try {
           Utils.tryLogNonFatalError {
@@ -153,9 +167,15 @@ private[spark] abstract class Task[T](
     this.taskMemoryManager = taskMemoryManager
   }
 
+  def getTaskMemoryManager(): TaskMemoryManager = {
+    return taskMemoryManager
+  }
+
   def runTask(context: TaskContext): T
 
   def preferredLocations: Seq[TaskLocation] = Nil
+
+  def addPreferredLocation(taskLocation: TaskLocation): Unit = { }
 
   // Map output tracker epoch. Will be set by TaskSetManager.
   var epoch: Long = -1
@@ -214,6 +234,21 @@ private[spark] abstract class Task[T](
     }
     if (interruptThread && taskThread != null) {
       taskThread.interrupt()
+    }
+  }
+
+  def pause(interruptThread: Boolean): Unit = {
+    if (context != null) {
+      context.markPaused(true)
+    }
+    if (interruptThread && taskThread != null) {
+      taskThread.interrupt()
+    }
+  }
+
+  def resume(): Unit = {
+    if (context != null) {
+      context.markPaused(false)
     }
   }
 }

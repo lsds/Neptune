@@ -27,6 +27,7 @@ import org.scalatest.concurrent.PatienceConfiguration.Timeout
 import org.scalatest.time.SpanSugar._
 
 import org.apache.spark.SparkFunSuite
+import org.apache.spark.sql.execution.streaming.AdaptiveQueue
 import org.apache.spark.sql.streaming.ProcessingTime
 import org.apache.spark.sql.streaming.util.StreamManualClock
 
@@ -46,6 +47,47 @@ class ProcessingTimeExecutorSuite extends SparkFunSuite with TimeLimits {
     assert(processingTimeExecutor.nextBatchTime(101) === 200)
     assert(processingTimeExecutor.nextBatchTime(150) === 200)
   }
+
+  test("adaptive queue") {
+    val aq = new AdaptiveQueue[Int](5)
+    assert(aq.toAdapt() == false)
+    aq.append(1)
+    aq.append(1)
+    assert(aq.toAdapt() == false)
+    aq.append(1)
+    aq.append(1)
+    aq.append(0)
+    assert(aq.toAdapt() == true)
+    aq.append(0)
+    aq.append(0)
+    assert(aq.toAdapt() == false)
+    aq.append(1)
+    aq.append(1)
+    aq.append(1)
+    aq.append(1)
+    assert(aq.toAdapt() == true)
+  }
+
+  test("test toadapt when majority needs to adapt") {
+    val aq = new AdaptiveQueue[Int](5)
+    aq.append(1)
+    assert(aq.list === List(1) )
+    aq.append(1)
+    assert(aq.list === List(1, 1))
+    aq.append(1)
+    assert(aq.list === List(1, 1, 1))
+    aq.append(0)
+    assert(aq.list === List(1, 1, 1, 0))
+    assert(aq.toAdapt() == false)
+    aq.append(0)
+    assert(aq.toAdapt() == true)
+    aq.append(1)
+    aq.append(1)
+    aq.append(1)
+    assert(aq.list === List(0, 0, 1, 1, 1))
+    assert(aq.toAdapt() == true)
+  }
+
 
   test("trigger timing") {
     val triggerTimes = new ConcurrentHashSet[Int]

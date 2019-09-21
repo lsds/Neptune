@@ -25,6 +25,8 @@ import org.apache.spark._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.util.{AccumulatorV2, CallSite}
 
+import org.coroutines.~>
+
 /**
  * Types of events that can be handled by the DAGScheduler. The DAGScheduler uses an event queue
  * architecture where any thread can post an event (e.g. a task finishing or a new job being
@@ -38,6 +40,17 @@ private[scheduler] case class JobSubmitted(
     jobId: Int,
     finalRDD: RDD[_],
     func: (TaskContext, Iterator[_]) => _,
+    partitions: Array[Int],
+    callSite: CallSite,
+    listener: JobListener,
+    properties: Properties = null)
+  extends DAGSchedulerEvent
+
+/** Neptune: pausable result-yielding Coroutine Job */
+private[scheduler] case class CoroutineJobSubmitted(
+    jobId: Int,
+    finalRDD: RDD[_],
+    func: (TaskContext, Iterator[_]) ~> (_, _),
     partitions: Array[Int],
     callSite: CallSite,
     listener: JobListener,
@@ -69,6 +82,12 @@ private[scheduler] case object AllJobsCancelled extends DAGSchedulerEvent
 
 private[scheduler]
 case class BeginEvent(task: Task[_], taskInfo: TaskInfo) extends DAGSchedulerEvent
+
+private[scheduler]
+case class PauseEvent(task: Task[_], taskInfo: TaskInfo) extends DAGSchedulerEvent
+
+private[scheduler]
+case class ResumeEvent(task: Task[_], taskInfo: TaskInfo) extends DAGSchedulerEvent
 
 private[scheduler]
 case class GettingResultEvent(taskInfo: TaskInfo) extends DAGSchedulerEvent

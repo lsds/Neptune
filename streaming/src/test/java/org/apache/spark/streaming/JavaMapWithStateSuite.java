@@ -65,7 +65,7 @@ public class JavaMapWithStateSuite extends LocalJavaStreamingContext implements 
             StateSpec.function(mappingFunc)
                 .initialState(initialRDD)
                 .numPartitions(10)
-                .partitioner(new HashPartitioner(10))
+                .partitioner(new HashPartitioner(ssc.sparkContext().getConf(), 10))
                 .timeout(Durations.seconds(10)));
 
     stateDstream.stateSnapshots();
@@ -86,7 +86,7 @@ public class JavaMapWithStateSuite extends LocalJavaStreamingContext implements 
             StateSpec.function(mappingFunc2)
                 .initialState(initialRDD)
                 .numPartitions(10)
-                .partitioner(new HashPartitioner(10))
+                .partitioner(new HashPartitioner(ssc.sparkContext().getConf(), 10))
                 .timeout(Durations.seconds(10)));
 
     stateDstream2.stateSnapshots();

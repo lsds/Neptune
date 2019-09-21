@@ -17,6 +17,10 @@
 
 package org.apache.spark.scheduler
 
+import org.apache.spark.scheduler.cluster.ExecutorData
+
+import scala.collection.mutable.HashMap
+
 /**
  * A backend interface for scheduling systems that allows plugging in different ones under
  * TaskSchedulerImpl. We assume a Mesos-like model where the application gets resource offers as
@@ -45,6 +49,30 @@ private[spark] trait SchedulerBackend {
       reason: String): Unit =
     throw new UnsupportedOperationException
 
+  /**
+   * ::Neptune::
+   * Request a Remote or Local Backend executor to pause a running coroutine Task.
+   *
+   * @param taskId
+   * @param executorId
+   * @param interruptThread
+   */
+  def pauseTask(
+      taskId: Long,
+      executorId: String,
+      interruptThread: Boolean): Unit = {}
+
+  /**
+   * ::Neptune::
+   * Request a Remote or Local Backend executor to resume a paused coroutine Task.
+   *
+   * @param taskId
+   * @param executorId
+   */
+  def resumeTask(
+       taskId: Long,
+       executorId: String): Unit = {}
+
   def isReady(): Boolean = true
 
   /**
@@ -68,5 +96,12 @@ private[spark] trait SchedulerBackend {
    * @return Map containing the log names and their respective URLs
    */
   def getDriverLogUrls: Option[Map[String, String]] = None
+
+  /**
+   * ::Neptune::
+   * Get a Map with all Backend details
+   * @return
+   */
+  def getExecutorDataMap(): HashMap[String, ExecutorData]
 
 }

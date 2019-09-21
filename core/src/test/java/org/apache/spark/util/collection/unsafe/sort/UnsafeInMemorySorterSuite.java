@@ -17,26 +17,24 @@
 
 package org.apache.spark.util.collection.unsafe.sort;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-
-import org.junit.Assert;
-import org.junit.Test;
-
-import org.apache.spark.HashPartitioner;
-import org.apache.spark.SparkConf;
-import org.apache.spark.memory.TestMemoryConsumer;
-import org.apache.spark.memory.TestMemoryManager;
-import org.apache.spark.memory.TaskMemoryManager;
-import org.apache.spark.unsafe.Platform;
-import org.apache.spark.unsafe.memory.MemoryBlock;
-
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.isIn;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.mock;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import org.apache.spark.HashPartitioner;
+import org.apache.spark.SparkConf;
+import org.apache.spark.memory.TaskMemoryManager;
+import org.apache.spark.memory.TestMemoryConsumer;
+import org.apache.spark.memory.TestMemoryManager;
+import org.apache.spark.unsafe.Platform;
+import org.apache.spark.unsafe.memory.MemoryBlock;
+import org.junit.Assert;
+import org.junit.Test;
 
 public class UnsafeInMemorySorterSuite {
 
@@ -104,7 +102,7 @@ public class UnsafeInMemorySorterSuite {
       }
     };
     // Compute key prefixes based on the records' partition ids
-    final HashPartitioner hashPartitioner = new HashPartitioner(4);
+    final HashPartitioner hashPartitioner = new HashPartitioner(new SparkConf(), 4);
     // Use integer comparison for comparing prefixes (which are partition ids, in this case)
     final PrefixComparator prefixComparator = PrefixComparators.LONG;
     UnsafeInMemorySorter sorter = new UnsafeInMemorySorter(consumer, memoryManager,
@@ -156,7 +154,7 @@ public class UnsafeInMemorySorterSuite {
     // Write the records into the data page:
     long position = dataPage.getBaseOffset();
 
-    final HashPartitioner hashPartitioner = new HashPartitioner(4);
+    final HashPartitioner hashPartitioner = new HashPartitioner(sparkConf, 4);
     // Use integer comparison for comparing prefixes (which are partition ids, in this case)
     final PrefixComparator prefixComparator = PrefixComparators.LONG;
     final RecordComparator recordComparator = new RecordComparator() {

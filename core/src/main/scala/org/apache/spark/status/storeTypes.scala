@@ -22,11 +22,12 @@ import java.util.Date
 
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
-
 import org.apache.spark.status.KVUtils._
 import org.apache.spark.status.api.v1._
 import org.apache.spark.ui.scope._
 import org.apache.spark.util.kvstore.KVIndex
+
+import scala.collection.mutable.ArrayBuffer
 
 private[spark] case class AppStatusStoreMetadata(version: Long)
 
@@ -223,7 +224,11 @@ private[spark] class TaskDataWrapper(
     val shuffleRecordsWritten: Long,
 
     val stageId: Int,
-    val stageAttemptId: Int) {
+    val stageAttemptId: Int,
+
+    val pauseTimes: ArrayBuffer[Long],
+    val resumeTimes: ArrayBuffer[Long],
+    var stageSubmissionTime: Long) {
 
   def hasMetrics: Boolean = executorDeserializeTime >= 0
 
@@ -276,7 +281,10 @@ private[spark] class TaskDataWrapper(
       speculative,
       accumulatorUpdates,
       errorMessage,
-      metrics)
+      metrics,
+      pauseTimes,
+      resumeTimes,
+      stageSubmissionTime)
   }
 
   @JsonIgnore @KVIndex(TaskIndexNames.STAGE)

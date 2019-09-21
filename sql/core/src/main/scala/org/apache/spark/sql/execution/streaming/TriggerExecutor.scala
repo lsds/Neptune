@@ -26,7 +26,7 @@ trait TriggerExecutor {
   /**
    * Execute batches using `batchRunner`. If `batchRunner` runs `false`, terminate the execution.
    */
-  def execute(batchRunner: () => Boolean): Unit
+  def execute(batchRunner: () => Boolean): Boolean
 }
 
 /**
@@ -37,7 +37,7 @@ case class OneTimeExecutor() extends TriggerExecutor {
   /**
    * Execute a single batch using `batchRunner`.
    */
-  override def execute(batchRunner: () => Boolean): Unit = batchRunner()
+  override def execute(batchRunner: () => Boolean): Boolean = batchRunner()
 }
 
 /**
@@ -49,7 +49,7 @@ case class ProcessingTimeExecutor(processingTime: ProcessingTime, clock: Clock =
   private val intervalMs = processingTime.intervalMs
   require(intervalMs >= 0)
 
-  override def execute(triggerHandler: () => Boolean): Unit = {
+  override def execute(triggerHandler: () => Boolean): Boolean = {
     while (true) {
       val triggerTimeMs = clock.getTimeMillis
       val nextTriggerTimeMs = nextBatchTime(triggerTimeMs)
@@ -60,15 +60,16 @@ case class ProcessingTimeExecutor(processingTime: ProcessingTime, clock: Clock =
           notifyBatchFallingBehind(batchElapsedTimeMs)
         }
         if (terminated) {
-          return
+          return false
         }
         clock.waitTillTime(nextTriggerTimeMs)
       } else {
         if (terminated) {
-          return
+          return false
         }
       }
     }
+    false
   }
 
   /** Called when a batch falls behind */

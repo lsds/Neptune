@@ -81,6 +81,8 @@ class HistoryServerSuite extends SparkFunSuite with BeforeAndAfter with Matchers
       .set("spark.history.fs.update.interval", "0")
       .set("spark.testing", "true")
       .set(LOCAL_STORE_DIR, storeDir.getAbsolutePath())
+      .set("spark.eventLog.logStageExecutorMetrics.enabled", "true")
+      .set("spark.eventLog.logStageExecutorProcessTreeMetrics.enabled", "true")
     conf.setAll(extraConf)
     provider = new FsHistoryProvider(conf)
     provider.checkForLogs()
@@ -127,6 +129,12 @@ class HistoryServerSuite extends SparkFunSuite with BeforeAndAfter with Matchers
     "succeeded&failed job list json" ->
       "applications/local-1422981780767/jobs?status=succeeded&status=failed",
     "executor list json" -> "applications/local-1422981780767/executors",
+    "executor list with executor metrics json" ->
+      "applications/application_1506645932520_24630151/executors",
+    "executor list with executor process tree metrics json" ->
+      "applications/application_1538416563558_0014/executors",
+    "executor list with executor garbage collection metrics json" ->
+      "applications/application_1536831636016_59384/1/executors",
     "stage list json" -> "applications/local-1422981780767/stages",
     "complete stage list json" -> "applications/local-1422981780767/stages?status=complete",
     "failed stage list json" -> "applications/local-1422981780767/stages?status=failed",

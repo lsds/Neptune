@@ -23,10 +23,12 @@ import java.nio.ByteBuffer
 import java.util.Properties
 import java.util.concurrent.{CountDownLatch, TimeUnit}
 
+import org.coroutines.{~>, _}
+
+import scala.collection.mutable
 import scala.collection.mutable.Map
 import scala.concurrent.duration._
 import scala.language.postfixOps
-
 import org.mockito.ArgumentCaptor
 import org.mockito.Matchers.{any, eq => meq}
 import org.mockito.Mockito.{inOrder, verify, when}
@@ -34,14 +36,13 @@ import org.mockito.invocation.InvocationOnMock
 import org.mockito.stubbing.Answer
 import org.scalatest.concurrent.Eventually
 import org.scalatest.mockito.MockitoSugar
-
 import org.apache.spark._
 import org.apache.spark.TaskState.TaskState
 import org.apache.spark.memory.MemoryManager
 import org.apache.spark.metrics.MetricsSystem
-import org.apache.spark.rdd.RDD
+import org.apache.spark.rdd.{RDD, UnionRDD}
 import org.apache.spark.rpc.RpcEnv
-import org.apache.spark.scheduler.{FakeTask, ResultTask, TaskDescription}
+import org.apache.spark.scheduler._
 import org.apache.spark.serializer.{JavaSerializer, SerializerManager}
 import org.apache.spark.shuffle.FetchFailedException
 import org.apache.spark.storage.BlockManagerId
@@ -126,6 +127,149 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
       if (executor != null) {
         executor.stop()
       }
+    }
+  }
+
+  /**
+   * ::Neptune::
+   */
+  test("Neptune ResultTask expected result") {
+    val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
+    sc = new SparkContext(conf)
+    val serializer = SparkEnv.get.closureSerializer.newInstance()
+    val resultFunc = (context: TaskContext, itr: Iterator[Int]) => itr.toList
+
+    val rdd1 = sc.parallelize(1 to 10, 1)
+    val rdd2 = rdd1.filter(_ % 2 == 0)
+    val rdd3 = rdd2.map(_ + 1)
+    // Should be: 3, 5, 7, 9, 11
+    // Action needed for the lazy-evaluation!!
+    rdd3.collect()
+
+
+    val taskBinary = sc.broadcast(serializer.serialize((rdd3, resultFunc)).array())
+    val serializedTaskMetrics = serializer.serialize(TaskMetrics.registered).array()
+    val task = new ResultTask(
+      stageId = 1,
+      stageAttemptId = 0,
+      taskBinary = taskBinary,
+      partition = rdd3.partitions(0),
+      locs = Seq(),
+      outputId = 0,
+      localProperties = new Properties(),
+      serializedTaskMetrics = serializedTaskMetrics
+    )
+
+    val serTask = serializer.serialize(task)
+    val taskDescription = createFakeTaskDescription(serTask)
+
+    // Expected results
+    val expectedResult = List(3, 5, 7, 9, 11)
+    // Now run Task
+    runTaskExpectedHandler(taskDescription, expectedResult)
+  }
+
+  test("Neptune coroutine ResultTask") {
+    val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
+    sc = new SparkContext(conf)
+    val serializer = SparkEnv.get.closureSerializer.newInstance()
+
+    val rdd1 = sc.parallelize(1 to 10, 1)
+    val rdd2 = rdd1.filter(_ % 2 == 0)
+    val rdd3 = rdd2.map(_ + 1)
+    // Should be: 3, 5, 7, 9, 11
+    // Action needed for the lazy-evaluation!!
+    rdd3.collect()
+
+    val resultFunc: (TaskContext, Iterator[Int]) ~> (Int, Any) =
+      coroutine { (context: TaskContext, itr: Iterator[Int]) => {
+        val result = new mutable.ArrayBuffer[Any]
+        while (itr.hasNext) {
+          result.append(itr.next)
+          if (context.isPaused()) {
+            yieldval(0)
+          }
+        }
+        result.toArray.asInstanceOf[Any]
+      }
+      }
+
+    val taskBinary = sc.broadcast(serializer.serialize((rdd3, resultFunc)).array())
+    val serializedTaskMetrics = serializer.serialize(TaskMetrics.registered).array()
+    val task = new ResultTask(
+      stageId = 1,
+      stageAttemptId = 0,
+      taskBinary = taskBinary,
+      partition = rdd3.partitions(0),
+      locs = Seq(),
+      outputId = 0,
+      localProperties = new Properties(),
+      serializedTaskMetrics = serializedTaskMetrics,
+      isPausable = true // calls coroutine deserializer
+    )
+
+    val serTask = serializer.serialize(task)
+    val taskDescription = createFakeTaskDescription(serTask)
+
+    // Expected results
+    val expectedResult = Array(3, 5, 7, 9, 11)
+    // Run the coroutine ResultTask bypassing the DAGScheduler
+    runTaskExpectedHandler(taskDescription, expectedResult)
+  }
+
+  test("test Neptune coroutine performance") {
+    val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
+    val numTrials = 100
+    val partitions = 4
+    val numElems = 1000000L
+
+    conf.enableNeptuneCoroutines()
+    sc = new SparkContext(conf)
+    warmup(sc)
+
+    val begin = System.nanoTime
+    for (j <- 0 until numTrials) {
+      val rdd1 = sc.parallelize(1L to numElems, partitions)
+      val rdd2 = rdd1.filter(_ % 2 == 0)
+      val rdd3 = rdd2.map(_ + 1)
+      // Should be: 3, 5, 7, 9, 11
+      // Action needed for the lazy-evaluation!!
+      val res = rdd3.collect()
+    }
+    // scalastyle:off
+    println(s"Neptune Took ${((System.nanoTime - begin) / 1e6) / numTrials} ms")
+  }
+
+  test("test Spark performance") {
+    val conf = new SparkConf().setMaster("local").setAppName("executor suite test")
+    val numTrials = 100
+    val partitions = 4
+    val numElems = 1000000L
+
+    sc = new SparkContext(conf)
+    warmup(sc)
+
+    val begin = System.nanoTime
+    for (j <- 0 until numTrials) {
+      val rdd1 = sc.parallelize(1L to numElems, partitions)
+      val rdd2 = rdd1.filter(_ % 2 == 0)
+      val rdd3 = rdd2.map(_ + 1)
+      // Should be: 3, 5, 7, 9, 11
+      // Action needed for the lazy-evaluation!!
+      val res = rdd3.collect()
+    }
+    // scalastyle:off
+    println(s"Spark Took ${((System.nanoTime - begin) / 1e6) / numTrials } ms")
+
+  }
+
+  def warmup(sc: SparkContext): Unit = {
+    // Let all the executors join
+    Thread.sleep(10000)
+    // Warm up the JVM and copy the JAR out to all the machines etc.
+    sc.parallelize(0 until sc.getExecutorMemoryStatus.size,
+      sc.getExecutorMemoryStatus.size).foreach { x =>
+      Thread.sleep(1)
     }
   }
 
@@ -258,6 +402,54 @@ class ExecutorSuite extends SparkFunSuite with LocalSparkContext with MockitoSug
 
   private def runTaskAndGetFailReason(taskDescription: TaskDescription): TaskFailedReason = {
     runTaskGetFailReasonAndExceptionHandler(taskDescription)._1
+  }
+
+
+  /**
+   * ::Neptune::
+   * Run a given Task in a mockedExecutor environment and assert the intercepted result
+   * @param taskDescription
+   * @param taskResult
+   */
+  private def runTaskExpectedHandler(taskDescription: TaskDescription, taskResult: Any): Unit = {
+    val mockBackend = mock[ExecutorBackend]
+    var executor: Executor = null
+    try {
+      executor = new Executor("id", "localhost", SparkEnv.get, userClassPath = Nil, isLocal = true)
+      // the task will be launched in a dedicated worker thread
+      executor.launchTask(mockBackend, taskDescription)
+      eventually(timeout(10.seconds), interval(10.milliseconds)) {
+        assert(executor.numRunningTasks === 0)
+      }
+    } finally {
+      if (executor != null) {
+        executor.stop()
+      }
+    }
+    // Capture all the updates send from the Executor in order
+    val orderedMock = inOrder(mockBackend)
+    val statusCaptor = ArgumentCaptor.forClass(classOf[ByteBuffer])
+    orderedMock.verify(mockBackend)
+      .statusUpdate(meq(0L), meq(TaskState.RUNNING), statusCaptor.capture())
+    orderedMock.verify(mockBackend)
+      .statusUpdate(meq(0L), meq(TaskState.FINISHED), statusCaptor.capture())
+
+    // first statusUpdate for RUNNING has empty data
+    assert(statusCaptor.getAllValues().get(0).remaining() === 0)
+
+    val taskSer = SparkEnv.get.closureSerializer.newInstance()
+
+    import collection.JavaConverters._
+    for( finishedTaskData <- statusCaptor.getAllValues.asScala) {
+      if (finishedTaskData.limit() !== 0) {
+        // first statusUpdate for FINISHED has expected data
+        // val finishedTaskResult = SparkEnv.get.closureSerializer.newInstance().deserialize[DirectTaskResult[_]](finishedTaskData)
+        taskSer.deserialize[TaskResult[_]](finishedTaskData) match {
+          case directResult: DirectTaskResult[_] =>
+            assert(directResult.value(taskSer)  === taskResult)
+        }
+      }
+    }
   }
 
   private def runTaskGetFailReasonAndExceptionHandler(

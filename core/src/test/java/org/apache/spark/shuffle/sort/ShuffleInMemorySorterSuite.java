@@ -77,7 +77,7 @@ public class ShuffleInMemorySorterSuite {
     final Object baseObject = dataPage.getBaseObject();
     final ShuffleInMemorySorter sorter = new ShuffleInMemorySorter(
       consumer, 4, shouldUseRadixSort());
-    final HashPartitioner hashPartitioner = new HashPartitioner(4);
+    final HashPartitioner hashPartitioner = new HashPartitioner(conf,4);
 
     // Write the records into the data page and store pointers into the sorter
     long position = dataPage.getBaseOffset();

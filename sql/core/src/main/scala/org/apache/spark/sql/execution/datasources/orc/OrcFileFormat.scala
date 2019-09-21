@@ -195,13 +195,13 @@ class OrcFileFormat
             partitionSchema,
             file.partitionValues)
 
-          val iter = new RecordReaderIterator(batchReader)
+          val iter = new RecordReaderIterator(batchReader, TaskContext.get())
           Option(TaskContext.get()).foreach(_.addTaskCompletionListener(_ => iter.close()))
           iter.asInstanceOf[Iterator[InternalRow]]
         } else {
           val orcRecordReader = new OrcInputFormat[OrcStruct]
             .createRecordReader(fileSplit, taskAttemptContext)
-          val iter = new RecordReaderIterator[OrcStruct](orcRecordReader)
+          val iter = new RecordReaderIterator[OrcStruct](orcRecordReader, TaskContext.get())
           Option(TaskContext.get()).foreach(_.addTaskCompletionListener(_ => iter.close()))
 
           val fullSchema = requiredSchema.toAttributes ++ partitionSchema.toAttributes

@@ -45,7 +45,7 @@ private[spark] abstract class Spillable[C](taskMemoryManager: TaskMemoryManager)
 
   // Called by subclasses every time a record is read
   // It's used for checking spilling frequency
-  protected def addElementsRead(): Unit = { _elementsRead += 1 }
+  def addElementsRead(): Unit = { _elementsRead += 1 }
 
   // Initial threshold for the size of a collection before we start tracking its memory usage
   // For testing only

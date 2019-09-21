@@ -28,13 +28,20 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.launcher.{LauncherBackend, SparkAppHandle}
 import org.apache.spark.rpc.{RpcCallContext, RpcEndpointRef, RpcEnv, ThreadSafeRpcEndpoint}
 import org.apache.spark.scheduler._
-import org.apache.spark.scheduler.cluster.ExecutorInfo
+import org.apache.spark.scheduler.cluster.{ExecutorData, ExecutorInfo}
+
+import scala.collection.mutable
+import scala.collection.mutable.HashMap
 
 private case class ReviveOffers()
 
 private case class StatusUpdate(taskId: Long, state: TaskState, serializedData: ByteBuffer)
 
 private case class KillTask(taskId: Long, interruptThread: Boolean, reason: String)
+
+private case class PauseTask(taskId: Long, interruptThread: Boolean)
+
+private case class ResumeTask(taskId: Long)
 
 private case class StopExecutor()
 
@@ -67,11 +74,56 @@ private[spark] class LocalEndpoint(
       scheduler.statusUpdate(taskId, state, serializedData)
       if (TaskState.isFinished(state)) {
         freeCores += scheduler.CPUS_PER_TASK
+        executorBackend.executorDataMap.get(localExecutorId) match {
+          case Some(executorInfo) =>
+            // Avoid corner case where task transitions from PAUSED to FINISHED
+            if (!scheduler.pausedTaskIds.contains(taskId)) {
+              executorInfo.freeCores += scheduler.CPUS_PER_TASK
+            }
+          case None =>
+            logWarning(s"Attempted to update unknown executor ${localExecutorId}")
+        }
         reviveOffers()
       }
 
     case KillTask(taskId, interruptThread, reason) =>
       executor.killTask(taskId, interruptThread, reason)
+
+    case PauseTask(taskId, interruptThread) =>
+      if (executor.pauseTask(taskId, interruptThread)) {
+        if (!scheduler.sc.conf.isNeptuneManualSchedulingEnabled()) {
+          freeCores += scheduler.CPUS_PER_TASK
+          executorBackend.executorDataMap.get(localExecutorId) match {
+            case Some(executorInfo) =>
+              executorInfo.freeCores += scheduler.CPUS_PER_TASK
+            case None =>
+              logWarning(s"Attempted to pause unknown executor ${localExecutorId}")
+          }
+          // fast-forward propagation
+          // at this point we might see more tasks running than in reality
+          // after the next PausedEvent propagation number gets back to normal
+          reviveOffers()
+        }
+      }
+
+
+    case ResumeTask(taskId) =>
+      if (executor.resumeTask(taskId)) {
+        // scalastyle:off println
+        System.err.println(s"Actually Resumed TASK ${taskId}")
+        // scalastyle:on println
+        if (!scheduler.sc.conf.isNeptuneManualSchedulingEnabled()) {
+          freeCores -= scheduler.CPUS_PER_TASK
+          executorBackend.executorDataMap.get(localExecutorId) match {
+            case Some(executorInfo) =>
+              executorInfo.freeCores -= scheduler.CPUS_PER_TASK
+            case None =>
+              logWarning(s"Attempted to resume unknown executor ${localExecutorId}")
+          }
+        }
+//      } else {
+//        reviveOffers()
+      }
   }
 
   override def receiveAndReply(context: RpcCallContext): PartialFunction[Any, Unit] = {
@@ -84,6 +136,12 @@ private[spark] class LocalEndpoint(
     val offers = IndexedSeq(new WorkerOffer(localExecutorId, localExecutorHostname, freeCores))
     for (task <- scheduler.resourceOffers(offers).flatten) {
       freeCores -= scheduler.CPUS_PER_TASK
+      executorBackend.executorDataMap.get(localExecutorId) match {
+        case Some(executorInfo) =>
+          executorInfo.freeCores -= scheduler.CPUS_PER_TASK
+        case None =>
+          logWarning(s"Attempted to update unknown executor ${localExecutorId}")
+      }
       executor.launchTask(executorBackend, task)
     }
   }
@@ -108,6 +166,7 @@ private[spark] class LocalSchedulerBackend(
     override def conf: SparkConf = LocalSchedulerBackend.this.conf
     override def onStopRequest(): Unit = stop(SparkAppHandle.State.KILLED)
   }
+  private[scheduler] val executorDataMap = new HashMap[String, ExecutorData]
 
   /**
    * Returns a list of URLs representing the user classpath.
@@ -131,6 +190,10 @@ private[spark] class LocalSchedulerBackend(
       new ExecutorInfo(executorEndpoint.localExecutorHostname, totalCores, Map.empty)))
     launcherBackend.setAppId(appId)
     launcherBackend.setState(SparkAppHandle.State.RUNNING)
+
+    val data = new ExecutorData(localEndpoint, localEndpoint.address, executorEndpoint.localExecutorId,
+      executorEndpoint.localExecutorHostname, totalCores, totalCores, Map.empty)
+    executorDataMap.put(executorEndpoint.localExecutorId, data)
   }
 
   override def stop() {
@@ -149,11 +212,23 @@ private[spark] class LocalSchedulerBackend(
     localEndpoint.send(KillTask(taskId, interruptThread, reason))
   }
 
+  override def pauseTask(
+       taskId: Long, executorId: String, interruptThread: Boolean): Unit = {
+    localEndpoint.send(PauseTask(taskId, interruptThread))
+  }
+
+  override def resumeTask(
+       taskId: Long, executorId: String): Unit = {
+    localEndpoint.send(ResumeTask(taskId))
+  }
+
   override def statusUpdate(taskId: Long, state: TaskState, serializedData: ByteBuffer) {
     localEndpoint.send(StatusUpdate(taskId, state, serializedData))
   }
 
   override def applicationId(): String = appId
+
+  override def getExecutorDataMap(): mutable.HashMap[String, ExecutorData] = executorDataMap
 
   private def stop(finalState: SparkAppHandle.State): Unit = {
     localEndpoint.ask(StopExecutor)

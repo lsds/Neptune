@@ -17,10 +17,14 @@
 
 package org.apache.spark.scheduler
 
+import org.apache.spark.executor.ExecutorMetrics
 import org.apache.spark.{LocalSparkContext, SparkConf, SparkContext, SparkFunSuite}
 import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
+import org.apache.spark.scheduler.cluster.ExecutorData
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.AccumulatorV2
+
+import scala.collection.mutable
 
 class ExternalClusterManagerSuite extends SparkFunSuite with LocalSparkContext {
   test("launch of backend and scheduler") {
@@ -69,6 +73,7 @@ private class DummySchedulerBackend extends SchedulerBackend {
   def stop() {}
   def reviveOffers() {}
   def defaultParallelism(): Int = 1
+  override def getExecutorDataMap(): mutable.HashMap[String, ExecutorData] = null
 }
 
 private class DummyTaskScheduler extends TaskScheduler {
@@ -81,6 +86,8 @@ private class DummyTaskScheduler extends TaskScheduler {
   override def cancelTasks(stageId: Int, interruptThread: Boolean): Unit = {}
   override def killTaskAttempt(
     taskId: Long, interruptThread: Boolean, reason: String): Boolean = false
+  override def pauseTaskAttempt(taskId: Long, interruptThread: Boolean): Boolean = false
+  override def resumeTaskAttempt(taskId: Long): Boolean = false
   override def setDAGScheduler(dagScheduler: DAGScheduler): Unit = {}
   override def defaultParallelism(): Int = 2
   override def executorLost(executorId: String, reason: ExecutorLossReason): Unit = {}
@@ -89,5 +96,6 @@ private class DummyTaskScheduler extends TaskScheduler {
   def executorHeartbeatReceived(
       execId: String,
       accumUpdates: Array[(Long, Seq[AccumulatorV2[_, _]])],
-      blockManagerId: BlockManagerId): Boolean = true
+      blockManagerId: BlockManagerId,
+      executorUpdates: ExecutorMetrics): Boolean = true
 }

@@ -26,6 +26,8 @@ import org.apache.spark._
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
 
+import org.coroutines.{call, ~>}
+
 /**
  * A task that sends back the output to the driver application.
  *
@@ -54,19 +56,26 @@ private[spark] class ResultTask[T, U](
     stageAttemptId: Int,
     taskBinary: Broadcast[Array[Byte]],
     partition: Partition,
-    locs: Seq[TaskLocation],
+    var locs: Seq[TaskLocation],
     val outputId: Int,
     localProperties: Properties,
     serializedTaskMetrics: Array[Byte],
     jobId: Option[Int] = None,
     appId: Option[String] = None,
-    appAttemptId: Option[String] = None)
+    appAttemptId: Option[String] = None,
+    isPausable: Boolean = false,
+    isCoroutine: Boolean = false)
   extends Task[U](stageId, stageAttemptId, partition.index, localProperties, serializedTaskMetrics,
-    jobId, appId, appAttemptId)
+    jobId, appId, appAttemptId, isPausable, isCoroutine)
   with Serializable {
 
-  @transient private[this] val preferredLocs: Seq[TaskLocation] = {
+  @transient private[this] var preferredLocs: Seq[TaskLocation] = {
     if (locs == null) Nil else locs.toSet.toSeq
+  }
+
+  override def addPreferredLocation(taskLocation: TaskLocation): Unit = {
+    locs = taskLocation +: locs
+    preferredLocs = if (locs == null) Nil else locs.toSet.toSeq
   }
 
   override def runTask(context: TaskContext): U = {
@@ -77,14 +86,32 @@ private[spark] class ResultTask[T, U](
       threadMXBean.getCurrentThreadCpuTime
     } else 0L
     val ser = SparkEnv.get.closureSerializer.newInstance()
-    val (rdd, func) = ser.deserialize[(RDD[T], (TaskContext, Iterator[T]) => U)](
-      ByteBuffer.wrap(taskBinary.value), Thread.currentThread.getContextClassLoader)
-    _executorDeserializeTime = System.currentTimeMillis() - deserializeStartTime
-    _executorDeserializeCpuTime = if (threadMXBean.isCurrentThreadCpuTimeSupported) {
-      threadMXBean.getCurrentThreadCpuTime - deserializeStartCpuTime
-    } else 0L
-
-    func(context, rdd.iterator(partition, context))
+    if (!isCoroutine) {
+      val (rdd, func) = ser.deserialize[(RDD[T], (TaskContext, Iterator[T]) => U)](
+        ByteBuffer.wrap(taskBinary.value), Thread.currentThread.getContextClassLoader)
+      _executorDeserializeTime = System.currentTimeMillis() - deserializeStartTime
+      _executorDeserializeCpuTime = if (threadMXBean.isCurrentThreadCpuTimeSupported) {
+        threadMXBean.getCurrentThreadCpuTime - deserializeStartCpuTime
+      } else 0L
+      func(context, rdd.iterator(partition, context))
+    }
+    else {
+      val (rdd, coFunc) = ser.deserialize[(RDD[T], (TaskContext, Iterator[T]) ~> (Any, Any))](
+        ByteBuffer.wrap(taskBinary.value), Thread.currentThread.getContextClassLoader)
+      _executorDeserializeTime = System.currentTimeMillis() - deserializeStartTime
+      _executorDeserializeCpuTime = if (threadMXBean.isCurrentThreadCpuTimeSupported) {
+        threadMXBean.getCurrentThreadCpuTime - deserializeStartCpuTime
+      } else 0L
+      if (context.getcoInstance() == null) {
+        context.setCoInstance(call(coFunc(context, rdd.iterator(partition, context))))
+      }
+      // Run up to the next yield Point
+      if(!context.getcoInstance().isCompleted && context.getcoInstance().pull) {
+        return ().asInstanceOf[U]
+      }
+      // No need to return the actual result which is captured in the Coroutine Frame
+      return ().asInstanceOf[U]
+    }
   }
 
   // This is only callable on the driver side.

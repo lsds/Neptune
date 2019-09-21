@@ -22,11 +22,9 @@ import java.util.Date
 import java.util.concurrent.TimeUnit
 import javax.servlet.http.HttpServletRequest
 
-import scala.collection.mutable.{HashMap, HashSet}
+import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
 import scala.xml.{Node, Unparsed}
-
 import org.apache.commons.lang3.StringEscapeUtils
-
 import org.apache.spark.scheduler.TaskLocality
 import org.apache.spark.status._
 import org.apache.spark.status.api.v1._
@@ -41,13 +39,17 @@ private[ui] class StagePage(parent: StagesTab, store: AppStatusStore) extends We
     <div class="legend-area">
       <svg>
         {
-          val legendPairs = List(("scheduler-delay-proportion", "Scheduler Delay"),
+          val legendPairs = List(("queuing-latency-proportion", "Queuing Latency"),
+            ("scheduler-delay-proportion", "Scheduler Delay"),
             ("deserialization-time-proportion", "Task Deserialization Time"),
             ("shuffle-read-time-proportion", "Shuffle Read Time"),
             ("executor-runtime-proportion", "Executor Computing Time"),
             ("shuffle-write-time-proportion", "Shuffle Write Time"),
             ("serialization-time-proportion", "Result Serialization Time"),
-            ("getting-result-time-proportion", "Getting Result Time"))
+            ("getting-result-time-proportion", "Getting Result Time"),
+            ("runtime-proportion", "Run Time"),
+            ("paused-proportion", "Paused Time")
+          )
 
           legendPairs.zipWithIndex.map {
             case ((classAttr, name), index) =>
@@ -139,6 +141,12 @@ private[ui] class StagePage(parent: StagesTab, store: AppStatusStore) extends We
     val summary =
       <div>
         <ul class="unstyled">
+          <li>
+            <strong>Queueing latency (ms):</strong>
+            { if (stageData.firstStageTaskLaunchedTime.isDefined && stageData.stageSubmissionTime.isDefined) {
+              stageData.firstStageTaskLaunchedTime.get - stageData.stageSubmissionTime.get
+            }}
+          </li>
           <li>
             <strong>Total Time Across All Tasks: </strong>
             {UIUtils.formatDuration(stageData.executorRunTime)}
@@ -519,7 +527,10 @@ private[ui] class StagePage(parent: StagesTab, store: AppStatusStore) extends We
         minLaunchTime = launchTime.min(minLaunchTime)
         maxFinishTime = finishTime.max(maxFinishTime)
 
-        def toProportion(time: Long) = time.toDouble / totalExecutionTime * 100
+        val stageSubmissionTime = taskInfo.stageSubmissionTime
+        val totalTime = finishTime - stageSubmissionTime
+
+        def toProportion(time: Long) = time.toDouble / totalTime * 100
 
         val metricsOpt = taskInfo.taskMetrics
         val shuffleReadTime =
@@ -546,20 +557,51 @@ private[ui] class StagePage(parent: StagesTab, store: AppStatusStore) extends We
             totalExecutionTime - executorOverhead - gettingResultTime)
         }
         val executorComputingTime = executorRunTime - shuffleReadTime - shuffleWriteTime
-        val executorComputingTimeProportion =
-          math.max(100 - schedulerDelayProportion - shuffleReadTimeProportion -
-            shuffleWriteTimeProportion - serializationTimeProportion -
-            deserializationTimeProportion - gettingResultTimeProportion, 0)
 
-        val schedulerDelayProportionPos = 0
+        // Queuing latency
+        val queuingLatency = taskInfo.launchTime.getTime - stageSubmissionTime
+        val queuingLatencyProportion = toProportion(queuingLatency)
+
+        // Pause and Resume times
+        val pauseTimes = taskInfo.pauseTimes
+        val resumeTimes = taskInfo.resumeTimes
+        val runtimeAndPauseDurations = ArrayBuffer.empty[Long]
+        var totalRuntimeDuration: Long = 0
+        var totalPauseDuration: Long = 0
+
+        for (i <- 0 until ((resumeTimes.length + pauseTimes.length) - 1)) {
+          val index = i / 2
+          if (i % 2 == 1) {
+            val pauseTime = resumeTimes(index + 1) - pauseTimes(index)
+            runtimeAndPauseDurations.+=(pauseTime)
+            totalPauseDuration += pauseTime
+          } else {
+            val runTime = pauseTimes(index) - resumeTimes(index)
+            runtimeAndPauseDurations.+=(runTime)
+            totalRuntimeDuration += runTime
+          }
+        }
+
+        val runtimeAndPauseDurationsProportions = runtimeAndPauseDurations.map(toProportion)
+
+        // Calculating offsets
+        val queuingLatencyProportionPos = 0
+        val schedulerDelayProportionPos =
+          queuingLatencyProportionPos + queuingLatencyProportion
         val deserializationTimeProportionPos =
           schedulerDelayProportionPos + schedulerDelayProportion
         val shuffleReadTimeProportionPos =
           deserializationTimeProportionPos + deserializationTimeProportion
         val executorRuntimeProportionPos =
           shuffleReadTimeProportionPos + shuffleReadTimeProportion
-        val shuffleWriteTimeProportionPos =
-          executorRuntimeProportionPos + executorComputingTimeProportion
+        val runtimeAndPausePositions =
+          runtimeAndPauseDurationsProportions.scanLeft(executorRuntimeProportionPos)((position, duration) => position + duration)
+
+        var shuffleWriteTimeProportionPos = runtimeAndPausePositions.last
+        if (!runtimeAndPauseDurationsProportions.isEmpty) {
+          shuffleWriteTimeProportionPos += runtimeAndPauseDurationsProportions.last
+        }
+
         val serializationTimeProportionPos =
           shuffleWriteTimeProportionPos + shuffleWriteTimeProportion
         val gettingResultTimeProportionPos =
@@ -574,6 +616,9 @@ private[ui] class StagePage(parent: StagesTab, store: AppStatusStore) extends We
             """<svg class="task-assignment-timeline-duration-bar"></svg>"""
           } else {
            s"""<svg class="task-assignment-timeline-duration-bar">
+                 |<rect class="queuing-latency-proportion"
+                   |x="$queuingLatencyProportionPos%" y="0px" height="26px"
+                   |width="$queuingLatencyProportion%"></rect>
                  |<rect class="scheduler-delay-proportion"
                    |x="$schedulerDelayProportionPos%" y="0px" height="26px"
                    |width="$schedulerDelayProportion%"></rect>
@@ -583,9 +628,25 @@ private[ui] class StagePage(parent: StagesTab, store: AppStatusStore) extends We
                  |<rect class="shuffle-read-time-proportion"
                    |x="$shuffleReadTimeProportionPos%" y="0px" height="26px"
                    |width="$shuffleReadTimeProportion%"></rect>
-                 |<rect class="executor-runtime-proportion"
-                   |x="$executorRuntimeProportionPos%" y="0px" height="26px"
-                   |width="$executorComputingTimeProportion%"></rect>
+                 ${
+                    val squaresOnTimeline = runtimeAndPausePositions.zip(runtimeAndPauseDurationsProportions).zipWithIndex.map {
+                      arg: ((Double, Double), Int) =>
+                        if (arg._2 % 2 == 0) {
+                          s"""
+                           |<rect class="runtime-proportion"
+                             |x="${arg._1._1}%" y="0px" height="26px"
+                             |width="${arg._1._2}%"></rect>
+                           """
+                        } else {
+                          s"""
+                           |<rect class="paused-proportion"
+                             |x="${arg._1._1}%" y="0px" height="26px"
+                             |width="${arg._1._2}%"></rect>
+                           """
+                        }
+                    }
+                    squaresOnTimeline.mkString("\n")
+                 }
                  |<rect class="shuffle-write-time-proportion"
                    |x="$shuffleWriteTimeProportionPos%" y="0px" height="26px"
                    |width="$shuffleWriteTimeProportion%"></rect>
@@ -614,10 +675,13 @@ private[ui] class StagePage(parent: StagesTab, store: AppStatusStore) extends We
                         ""
                       }
                    }
+                 |<br>Queuing Latency: $queuingLatency ms
                  |<br>Scheduler Delay: $schedulerDelay ms
                  |<br>Task Deserialization Time: ${UIUtils.formatDuration(deserializationTime)}
                  |<br>Shuffle Read Time: ${UIUtils.formatDuration(shuffleReadTime)}
                  |<br>Executor Computing Time: ${UIUtils.formatDuration(executorComputingTime)}
+                 |<br>Total Run Time: ${UIUtils.formatDuration(totalRuntimeDuration)}
+                 |<br>Total Paused Time: ${UIUtils.formatDuration(totalPauseDuration)}
                  |<br>Shuffle Write Time: ${UIUtils.formatDuration(shuffleWriteTime)}
                  |<br>Result Serialization Time: ${UIUtils.formatDuration(serializationTime)}
                  |<br>Getting Result Time: ${UIUtils.formatDuration(gettingResultTime)}">

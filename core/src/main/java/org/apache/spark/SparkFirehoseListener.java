@@ -48,6 +48,12 @@ public class SparkFirehoseListener implements SparkListenerInterface {
   }
 
   @Override
+  public final void onTaskPaused(SparkListenerTaskPaused taskPaused) { onEvent(taskPaused); }
+
+  @Override
+  public final void onTaskResumed(SparkListenerTaskResumed taskResumed) { onEvent(taskResumed); }
+
+  @Override
   public final void onTaskGettingResult(SparkListenerTaskGettingResult taskGettingResult) {
     onEvent(taskGettingResult);
   }
@@ -101,6 +107,12 @@ public class SparkFirehoseListener implements SparkListenerInterface {
   public final void onExecutorMetricsUpdate(
       SparkListenerExecutorMetricsUpdate executorMetricsUpdate) {
     onEvent(executorMetricsUpdate);
+  }
+
+  @Override
+  public final void onStageExecutorMetrics(
+          SparkListenerStageExecutorMetrics executorMetrics) {
+    onEvent(executorMetrics);
   }
 
   @Override

@@ -134,20 +134,20 @@ class RDDSuite extends SparkFunSuite with SharedSparkContext {
   }
 
   test("SparkContext.union creates UnionRDD if at least one RDD has no partitioner") {
-    val rddWithPartitioner = sc.parallelize(Seq(1 -> true)).partitionBy(new HashPartitioner(1))
+    val rddWithPartitioner = sc.parallelize(Seq(1 -> true)).partitionBy(new HashPartitioner(sc.conf, 1))
     val rddWithNoPartitioner = sc.parallelize(Seq(2 -> true))
     val unionRdd = sc.union(rddWithNoPartitioner, rddWithPartitioner)
     assert(unionRdd.isInstanceOf[UnionRDD[_]])
   }
 
   test("SparkContext.union creates PartitionAwareUnionRDD if all RDDs have partitioners") {
-    val rddWithPartitioner = sc.parallelize(Seq(1 -> true)).partitionBy(new HashPartitioner(1))
+    val rddWithPartitioner = sc.parallelize(Seq(1 -> true)).partitionBy(new HashPartitioner(sc.conf, 1))
     val unionRdd = sc.union(rddWithPartitioner, rddWithPartitioner)
     assert(unionRdd.isInstanceOf[PartitionerAwareUnionRDD[_]])
   }
 
   test("PartitionAwareUnionRDD raises exception if at least one RDD has no partitioner") {
-    val rddWithPartitioner = sc.parallelize(Seq(1 -> true)).partitionBy(new HashPartitioner(1))
+    val rddWithPartitioner = sc.parallelize(Seq(1 -> true)).partitionBy(new HashPartitioner(sc.conf, 1))
     val rddWithNoPartitioner = sc.parallelize(Seq(2 -> true))
     intercept[IllegalArgumentException] {
       new PartitionerAwareUnionRDD(sc, Seq(rddWithNoPartitioner, rddWithPartitioner))
@@ -158,7 +158,7 @@ class RDDSuite extends SparkFunSuite with SharedSparkContext {
     def makeRDDWithPartitioner(seq: Seq[Int]): RDD[Int] = {
       sc.makeRDD(seq, 1)
         .map(x => (x, null))
-        .partitionBy(new HashPartitioner(2))
+        .partitionBy(new HashPartitioner(sc.conf, 2))
         .mapPartitions(_.map(_._1), true)
     }
 
@@ -680,7 +680,7 @@ class RDDSuite extends SparkFunSuite with SharedSparkContext {
   }
 
   test("sample preserves partitioner") {
-    val partitioner = new HashPartitioner(2)
+    val partitioner = new HashPartitioner(sc.conf, 2)
     val rdd = sc.parallelize(Seq((0, 1), (2, 3))).partitionBy(partitioner)
     for (withReplacement <- Seq(true, false)) {
       val sampled = rdd.sample(withReplacement, 1.0)

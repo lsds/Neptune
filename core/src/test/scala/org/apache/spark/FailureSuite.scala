@@ -124,7 +124,8 @@ class FailureSuite extends SparkFunSuite with LocalSparkContext {
 
     // Non-serializable closure in an earlier stage
     val thrown1 = intercept[SparkException] {
-      sc.parallelize(1 to 10, 2).map(x => (x, a)).partitionBy(new HashPartitioner(3)).count()
+      sc.parallelize(1 to 10, 2).map(x => (x, a)).partitionBy(
+        new HashPartitioner(sc.conf, 3)).count()
     }
     assert(thrown1.getClass === classOf[SparkException])
     assert(thrown1.getMessage.contains("NotSerializableException") ||
@@ -234,7 +235,7 @@ class FailureSuite extends SparkFunSuite with LocalSparkContext {
       }
       (x, x)
     }
-    val dep = new ShuffleDependency[Int, Int, Int](rdd, new HashPartitioner(2))
+    val dep = new ShuffleDependency[Int, Int, Int](rdd, new HashPartitioner(sc.conf, 2))
     sc.submitMapStage(dep).get()
     FailureSuiteState.synchronized {
       assert(FailureSuiteState.tasksRun === 4)

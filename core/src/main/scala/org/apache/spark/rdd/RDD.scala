@@ -46,6 +46,8 @@ import org.apache.spark.util.collection.{OpenHashMap, Utils => collectionUtils}
 import org.apache.spark.util.random.{BernoulliCellSampler, BernoulliSampler, PoissonSampler,
   SamplingUtils}
 
+import org.coroutines.{coroutine, yieldval, ~>}
+
 /**
  * A Resilient Distributed Dataset (RDD), the basic abstraction in Spark. Represents an immutable,
  * partitioned collection of elements that can be operated on in parallel. This class contains the
@@ -156,6 +158,24 @@ abstract class RDD[T: ClassTag](
   def setName(_name: String): this.type = {
     name = _name
     this
+  }
+
+  /** Neptune ThreadSync wait/notify impl */
+  def checkSuspend(context: TaskContext): Unit = {
+    if (context.isPaused()) {
+      context.synchronized {
+        while (context.isPaused()) {
+          try {
+            context.setTaskPausedEndTime(System.nanoTime())
+            context.wait()
+          } catch {
+            case e: InterruptedException =>
+              logWarning("Suspendable Task interrupted")
+          }
+        }
+      }
+    }
+    context.setTaskResumedEndTime(System.nanoTime())
   }
 
   /**
@@ -461,7 +481,7 @@ abstract class RDD[T: ClassTag](
       // include a shuffle step so that our upstream tasks are still distributed
       new CoalescedRDD(
         new ShuffledRDD[Int, T, T](mapPartitionsWithIndex(distributePartition),
-        new HashPartitioner(numPartitions)),
+        new HashPartitioner(this.context.conf, numPartitions)),
         numPartitions,
         partitionCoalescer).values
     } else {
@@ -658,7 +678,7 @@ abstract class RDD[T: ClassTag](
    * @param numPartitions How many partitions to use in the resulting RDD
    */
   def intersection(other: RDD[T], numPartitions: Int): RDD[T] = withScope {
-    intersection(other, new HashPartitioner(numPartitions))
+    intersection(other, new HashPartitioner(this.context.conf, numPartitions))
   }
 
   /**
@@ -701,7 +721,7 @@ abstract class RDD[T: ClassTag](
   def groupBy[K](
       f: T => K,
       numPartitions: Int)(implicit kt: ClassTag[K]): RDD[(K, Iterable[T])] = withScope {
-    groupBy(f, new HashPartitioner(numPartitions))
+    groupBy(f, new HashPartitioner(this.context.conf, numPartitions))
   }
 
   /**
@@ -916,15 +936,69 @@ abstract class RDD[T: ClassTag](
    */
   def foreach(f: T => Unit): Unit = withScope {
     val cleanF = sc.clean(f)
-    sc.runJob(this, (iter: Iterator[T]) => iter.foreach(cleanF))
+    if (sc.getConf.isNeptuneCoroutinesEnabled()) {
+      // Iterator toArray coroutine implementation
+      val foreachCoFunc: (TaskContext, Iterator[T]) ~> (Int, Unit) =
+        coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          while (itr.hasNext) {
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+            cleanF(itr.next())
+          }
+        }
+        }
+      sc.runJob(this, foreachCoFunc)
+    } else if (sc.getConf.isNeptuneThreadSyncEnabled()) {
+      val forEachThreadSyncFunc = (context: TaskContext, itr: Iterator[T]) => {
+        while (itr.hasNext) {
+          checkSuspend(context)
+          cleanF(itr.next())
+        }
+      }
+      sc.runJob(this, forEachThreadSyncFunc)
+    } else {
+      sc.runJob(this, (iter: Iterator[T]) => iter.foreach(cleanF))
+    }
   }
 
   /**
    * Applies a function f to each partition of this RDD.
+   * TODO: Neptune yielding more fine-grained?
    */
   def foreachPartition(f: Iterator[T] => Unit): Unit = withScope {
     val cleanF = sc.clean(f)
-    sc.runJob(this, (iter: Iterator[T]) => cleanF(iter))
+    if (sc.getConf.isNeptuneCoroutinesEnabled()) {
+      // coroutine implementation
+      val foreachPartitionCoFunc: (TaskContext, Iterator[T]) ~> (Int, Unit) =
+        coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          log.warn("[ForEachPartition] NEPTUNE coarse-grained yield point")
+          if (context.isPaused()) {
+            yieldval(0)
+          }
+          cleanF(itr)
+         }
+        }
+      sc.runJob(this, foreachPartitionCoFunc)
+    } else if (sc.getConf.isNeptuneThreadSyncEnabled()) {
+      val forEachPartThreadSyncFunc = (context: TaskContext, itr: Iterator[T]) => {
+        checkSuspend(context)
+        cleanF(itr)
+      }
+      sc.runJob(this, forEachPartThreadSyncFunc)
+    } else {
+      sc.runJob(this, (iter: Iterator[T]) => cleanF(iter))
+    }
+  }
+
+  def foreachPartitionThreadSync(f: (TaskContext, Iterator[T]) => Unit): Unit = withScope {
+    val cleanF = sc.clean(f)
+    sc.runJob(this, cleanF)
+  }
+
+  def foreachPartitionCoFunc(coFunc: (TaskContext, Iterator[T]) ~> (Int, Unit)): Unit = withScope {
+    val cleanF = sc.clean(coFunc)
+    sc.runJob(this, cleanF)
   }
 
   /**
@@ -934,7 +1008,34 @@ abstract class RDD[T: ClassTag](
    * all the data is loaded into the driver's memory.
    */
   def collect(): Array[T] = withScope {
-    val results = sc.runJob(this, (iter: Iterator[T]) => iter.toArray)
+    val results = if (sc.getConf.isNeptuneCoroutinesEnabled()) {
+      // Iterator toArray coroutine implementation
+      val toArrayCoFunc: (TaskContext, Iterator[T]) ~> (Int, Array[T]) =
+        coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          val result = new mutable.ArrayBuffer[T]
+          while (itr.hasNext) {
+            result.append(itr.next)
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+          }
+          result.toArray
+        }
+        }
+      sc.runJob(this, toArrayCoFunc)
+    } else if (sc.getConf.isNeptuneThreadSyncEnabled()) {
+      val collectThreadSyncFunc = (context: TaskContext, itr: Iterator[T]) => {
+        val result = new mutable.ArrayBuffer[T]
+        while (itr.hasNext) {
+          checkSuspend(context)
+          result.append(itr.next)
+        }
+        result.toArray
+      }
+      sc.runJob(this, collectThreadSyncFunc)
+    } else {
+      sc.runJob(this, (iter: Iterator[T]) => iter.toArray)
+    }
     Array.concat(results: _*)
   }
 
@@ -951,7 +1052,41 @@ abstract class RDD[T: ClassTag](
     def collectPartition(p: Int): Array[T] = {
       sc.runJob(this, (iter: Iterator[T]) => iter.toArray, Seq(p)).head
     }
-    partitions.indices.iterator.flatMap(i => collectPartition(i))
+    def collectPartitionCoroutine(p: Int): Array[T] = {
+      val toArrayCoFunc: (TaskContext, Iterator[T]) ~> (Int, Array[T]) =
+        coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          val result = new mutable.ArrayBuffer[T]
+          while (itr.hasNext) {
+            result.append(itr.next)
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+          }
+          result.toArray
+        }
+        }
+      sc.runJob(this, toArrayCoFunc, Seq(p)).head
+    }
+
+    def collectPartitionThreadSyncFunc(p: Int): Array[T] = {
+      val collectPartThreadSyncFunc = (context: TaskContext, itr: Iterator[T]) => {
+        val result = new mutable.ArrayBuffer[T]
+        while (itr.hasNext) {
+          checkSuspend(context)
+          result.append(itr.next)
+        }
+        result.toArray
+      }
+      sc.runJob(this, collectPartThreadSyncFunc, Seq(p)).head
+    }
+
+    if (sc.getConf.isNeptuneCoroutinesEnabled()) {
+      partitions.indices.iterator.flatMap(i => collectPartitionCoroutine(i))
+    } else if (sc.getConf.isNeptuneThreadSyncEnabled()) {
+      partitions.indices.iterator.flatMap(i => collectPartitionThreadSyncFunc(i))
+    } else {
+      partitions.indices.iterator.flatMap(i => collectPartition(i))
+    }
   }
 
   /**
@@ -969,14 +1104,15 @@ abstract class RDD[T: ClassTag](
    * RDD will be &lt;= us.
    */
   def subtract(other: RDD[T]): RDD[T] = withScope {
-    subtract(other, partitioner.getOrElse(new HashPartitioner(partitions.length)))
+    subtract(other, partitioner.getOrElse(
+      new HashPartitioner(this.context.conf, partitions.length)))
   }
 
   /**
    * Return an RDD with the elements from `this` that are not in `other`.
    */
   def subtract(other: RDD[T], numPartitions: Int): RDD[T] = withScope {
-    subtract(other, new HashPartitioner(numPartitions))
+    subtract(other, new HashPartitioner(this.context.conf, numPartitions))
   }
 
   /**
@@ -1015,6 +1151,62 @@ abstract class RDD[T: ClassTag](
         None
       }
     }
+
+    val reducePartitionCoFunc: (TaskContext, Iterator[T]) ~> (Int, Option[T]) =
+      coroutine { (context: TaskContext, itr: Iterator[T]) => {
+        if (itr.hasNext) {
+          // ReduceLeft custom implementation
+          if (itr.isEmpty) {
+            throw new UnsupportedOperationException("empty.reduceLeft")
+          }
+          var first = true
+          var acc: Any = 0
+
+          while (itr.hasNext) {
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+            if (first) {
+              acc = itr.next
+              first = false
+            }
+            else {
+              acc = cleanF(acc.asInstanceOf[T], itr.next)
+            }
+          }
+          Some(acc.asInstanceOf[T])
+        }
+        else {
+          None
+        }
+        }
+      }
+
+    val reducePartThreadSyncFunc = (context: TaskContext, itr: Iterator[T]) => {
+      if (itr.hasNext) {
+        // ReduceLeft custom implementation
+        if (itr.isEmpty) {
+          throw new UnsupportedOperationException("empty.reduceLeft")
+        }
+        var first = true
+        var acc: Any = 0
+
+        while (itr.hasNext) {
+          checkSuspend(context)
+          if (first) {
+            acc = itr.next
+            first = false
+          }
+          else {
+            acc = cleanF(acc.asInstanceOf[T], itr.next)
+          }
+        }
+        Some(acc.asInstanceOf[T])
+      } else {
+        None
+      }
+    }
+
     var jobResult: Option[T] = None
     val mergeResult = (index: Int, taskResult: Option[T]) => {
       if (taskResult.isDefined) {
@@ -1024,7 +1216,13 @@ abstract class RDD[T: ClassTag](
         }
       }
     }
-    sc.runJob(this, reducePartition, mergeResult)
+    if (sc.getConf.isNeptuneCoroutinesEnabled()) {
+      sc.runCoroutineJob(this, reducePartitionCoFunc, 0 until this.partitions.length, mergeResult)
+    } else if (sc.getConf.isNeptuneThreadSyncEnabled()) {
+      sc.runJob(this, reducePartThreadSyncFunc, 0 until this.partitions.length, mergeResult)
+    } else {
+      sc.runJob(this, reducePartition, mergeResult)
+    }
     // Get the final result out of our Option, or throw an exception if the RDD was empty
     jobResult.getOrElse(throw new UnsupportedOperationException("empty collection"))
   }
@@ -1085,9 +1283,36 @@ abstract class RDD[T: ClassTag](
     // Clone the zero value since we will also be serializing it as part of tasks
     var jobResult = Utils.clone(zeroValue, sc.env.closureSerializer.newInstance())
     val cleanOp = sc.clean(op)
-    val foldPartition = (iter: Iterator[T]) => iter.fold(zeroValue)(cleanOp)
     val mergeResult = (index: Int, taskResult: T) => jobResult = op(jobResult, taskResult)
-    sc.runJob(this, foldPartition, mergeResult)
+    if (sc.getConf.isNeptuneCoroutinesEnabled()) {
+      // FoldLeft coroutine implementation
+      val foldPartitionCoFunc: (TaskContext, Iterator[T]) ~> (Int, T) =
+        coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          var result: Any = zeroValue.asInstanceOf[T]
+          while (itr.hasNext) {
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+            result = op(result.asInstanceOf[T], itr.next)
+          }
+          result.asInstanceOf[T]
+        }
+       }
+      sc.runCoroutineJob(this, foldPartitionCoFunc, 0 until this.partitions.length, mergeResult)
+    } else if (sc.getConf.isNeptuneThreadSyncEnabled()) {
+      val foldThreadSyncFunc = (context: TaskContext, itr: Iterator[T]) => {
+        var result: Any = zeroValue.asInstanceOf[T]
+        while (itr.hasNext) {
+          checkSuspend(context)
+          result = op(result.asInstanceOf[T], itr.next)
+        }
+        result.asInstanceOf[T]
+      }
+      sc.runJob(this, foldThreadSyncFunc, 0 until this.partitions.length, mergeResult)
+    } else {
+      val foldPartition = (iter: Iterator[T]) => iter.fold(zeroValue)(cleanOp)
+      sc.runJob(this, foldPartition, mergeResult)
+    }
     jobResult
   }
 
@@ -1111,9 +1336,37 @@ abstract class RDD[T: ClassTag](
     var jobResult = Utils.clone(zeroValue, sc.env.serializer.newInstance())
     val cleanSeqOp = sc.clean(seqOp)
     val cleanCombOp = sc.clean(combOp)
-    val aggregatePartition = (it: Iterator[T]) => it.aggregate(zeroValue)(cleanSeqOp, cleanCombOp)
+
     val mergeResult = (index: Int, taskResult: U) => jobResult = combOp(jobResult, taskResult)
-    sc.runJob(this, aggregatePartition, mergeResult)
+    if (sc.getConf.isNeptuneCoroutinesEnabled()) {
+      // Aggregate coroutine implementation
+      val aggregatePartitionCoFunc: (TaskContext, Iterator[T]) ~> (Int, U) =
+        coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          var result: Any = zeroValue.asInstanceOf[U]
+          while (itr.hasNext) {
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+            result = cleanSeqOp(result.asInstanceOf[U], itr.next)
+          }
+          result.asInstanceOf[U]
+        }
+        }
+      sc.runCoroutineJob(this, aggregatePartitionCoFunc, 0 until this.partitions.length, mergeResult)
+    } else if (sc.getConf.isNeptuneThreadSyncEnabled()) {
+      val aggrPartitionThreadSyncFunc = (context: TaskContext, itr: Iterator[T]) => {
+        var result: Any = zeroValue.asInstanceOf[U]
+        while (itr.hasNext) {
+          checkSuspend(context)
+          result = cleanSeqOp(result.asInstanceOf[U], itr.next)
+        }
+        result.asInstanceOf[U]
+      }
+      sc.runJob(this, aggrPartitionThreadSyncFunc, 0 until this.partitions.length, mergeResult)
+    } else {
+      val aggregatePartition = (it: Iterator[T]) => it.aggregate(zeroValue)(cleanSeqOp, cleanCombOp)
+      sc.runJob(this, aggregatePartition, mergeResult)
+    }
     jobResult
   }
 
@@ -1147,7 +1400,8 @@ abstract class RDD[T: ClassTag](
         val curNumPartitions = numPartitions
         partiallyAggregated = partiallyAggregated.mapPartitionsWithIndex {
           (i, iter) => iter.map((i % curNumPartitions, _))
-        }.foldByKey(zeroValue, new HashPartitioner(curNumPartitions))(cleanCombOp).values
+        }.foldByKey(zeroValue, new HashPartitioner(this.context.conf,
+          curNumPartitions))(cleanCombOp).values
       }
       val copiedZeroValue = Utils.clone(zeroValue, sc.env.closureSerializer.newInstance())
       partiallyAggregated.fold(copiedZeroValue)(cleanCombOp)
@@ -1157,7 +1411,37 @@ abstract class RDD[T: ClassTag](
   /**
    * Return the number of elements in the RDD.
    */
-  def count(): Long = sc.runJob(this, Utils.getIteratorSize _).sum
+  def count(): Long = {
+    if (sc.getConf.isNeptuneCoroutinesEnabled()) {
+      val toIteratorSizeCoFunc: (TaskContext, Iterator[T]) ~> (Int, Long) =
+        coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          var count = 0L
+          while (itr.hasNext) {
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+            count += 1L
+            itr.next()
+          }
+          count
+        }
+        }
+      sc.runJob(this, toIteratorSizeCoFunc).sum
+    } else if (sc.getConf.isNeptuneThreadSyncEnabled()) {
+      val countThreadSyncFunc = (context: TaskContext, itr: Iterator[T]) => {
+        var count = 0L
+        while (itr.hasNext) {
+          checkSuspend(context)
+          count += 1L
+          itr.next()
+        }
+        count
+      }
+      sc.runJob(this, countThreadSyncFunc).sum
+    } else {
+      sc.runJob(this, Utils.getIteratorSize _).sum
+    }
+  }
 
   /**
    * Approximate version of count() that returns a potentially incomplete result
@@ -1353,8 +1637,34 @@ abstract class RDD[T: ClassTag](
         }
 
         val p = partsScanned.until(math.min(partsScanned + numPartsToTry, totalParts).toInt)
-        val res = sc.runJob(this, (it: Iterator[T]) => it.take(left).toArray, p)
-
+        val res = if (sc.getConf.isNeptuneCoroutinesEnabled()) {
+          // take the first 0,n elements (slice)
+          val takeFunc: (TaskContext, Iterator[T]) ~> (Int, Array[T]) =
+            coroutine { (context: TaskContext, itr: Iterator[T]) => {
+              val result = new mutable.ArrayBuffer[T]
+              while (itr.hasNext && result.size < left) {
+                result.append(itr.next)
+                if (context.isPaused()) {
+                  yieldval(0)
+                }
+              }
+              result.toArray
+            }
+            }
+          sc.runJob(this, takeFunc, p)
+        } else if (sc.getConf.isNeptuneThreadSyncEnabled()) {
+          val takeThreadSyncFunc = (context: TaskContext, itr: Iterator[T]) => {
+            val result = new mutable.ArrayBuffer[T]
+            while (itr.hasNext && result.size < left) {
+              checkSuspend(context)
+              result.append(itr.next)
+            }
+            result.toArray
+          }
+          sc.runJob(this, takeThreadSyncFunc, p)
+        } else {
+          sc.runJob(this, (it: Iterator[T]) => it.take(left).toArray, p)
+        }
         res.foreach(buf ++= _.take(num - buf.size))
         partsScanned += p.size
       }
@@ -1528,7 +1838,34 @@ abstract class RDD[T: ClassTag](
 
   /** A private method for tests, to look at the contents of each partition */
   private[spark] def collectPartitions(): Array[Array[T]] = withScope {
-    sc.runJob(this, (iter: Iterator[T]) => iter.toArray)
+    if (sc.getConf.isNeptuneCoroutinesEnabled()) {
+      // Iterator toArray coroutine implementation
+      val toArrayCoFunc: (TaskContext, Iterator[T]) ~> (Int, Array[T]) =
+        coroutine { (context: TaskContext, itr: Iterator[T]) => {
+          val result = new mutable.ArrayBuffer[T]
+          while (itr.hasNext) {
+            result.append(itr.next)
+            if (context.isPaused()) {
+              yieldval(0)
+            }
+          }
+          result.toArray
+        }
+        }
+      sc.runJob(this, toArrayCoFunc)
+    } else if (sc.getConf.isNeptuneThreadSyncEnabled()) {
+      val toArrayTheadSyncFunc = (context: TaskContext, itr: Iterator[T]) => {
+        val result = new mutable.ArrayBuffer[T]
+        while (itr.hasNext) {
+          checkSuspend(context)
+          result.append(itr.next)
+        }
+        result.toArray
+      }
+      sc.runJob(this, toArrayTheadSyncFunc)
+    } else {
+      sc.runJob(this, (iter: Iterator[T]) => iter.toArray)
+    }
   }
 
   /**

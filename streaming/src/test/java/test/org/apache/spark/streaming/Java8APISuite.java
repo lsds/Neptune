@@ -632,7 +632,7 @@ public class Java8APISuite extends LocalJavaStreamingContext implements Serializ
     JavaPairDStream<String, Integer> pairStream = JavaPairDStream.fromJavaDStream(stream);
 
     JavaPairDStream<String, Integer> combined = pairStream.combineByKey(i -> i,
-      (x, y) -> x + y, (x, y) -> x + y, new HashPartitioner(2));
+      (x, y) -> x + y, (x, y) -> x + y, new HashPartitioner(ssc.sparkContext().getConf(), 2));
 
     JavaTestUtils.attachTestOutputStream(combined);
     List<List<Tuple2<String, Integer>>> result = JavaTestUtils.runStreams(ssc, 2, 2);
@@ -870,7 +870,7 @@ public class Java8APISuite extends LocalJavaStreamingContext implements Serializ
         StateSpec.function(mapFn)
           .initialState(initialRDD)
           .numPartitions(10)
-          .partitioner(new HashPartitioner(10))
+          .partitioner(new HashPartitioner(ssc.sparkContext().getConf(),10))
           .timeout(Durations.seconds(10)));
 
     JavaPairDStream<String, Boolean> emittedRecords = stateDstream.stateSnapshots();
@@ -890,7 +890,7 @@ public class Java8APISuite extends LocalJavaStreamingContext implements Serializ
         StateSpec.function(mapFn2)
           .initialState(initialRDD)
           .numPartitions(10)
-          .partitioner(new HashPartitioner(10))
+          .partitioner(new HashPartitioner(ssc.sparkContext().getConf(),10))
           .timeout(Durations.seconds(10)));
 
     JavaPairDStream<String, Boolean> mappedDStream = stateDstream2.stateSnapshots();

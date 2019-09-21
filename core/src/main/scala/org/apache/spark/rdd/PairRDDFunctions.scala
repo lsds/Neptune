@@ -43,6 +43,8 @@ import org.apache.spark.util.{SerializableConfiguration, SerializableJobConf, Ut
 import org.apache.spark.util.collection.CompactBuffer
 import org.apache.spark.util.random.StratifiedSamplingUtils
 
+import org.coroutines.{coroutine, yieldval, ~>}
+
 /**
  * Extra functions available on RDDs of (key, value) pairs through an implicit conversion.
  */
@@ -145,7 +147,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
       mergeCombiners: (C, C) => C,
       numPartitions: Int)(implicit ct: ClassTag[C]): RDD[(K, C)] = self.withScope {
     combineByKeyWithClassTag(createCombiner, mergeValue, mergeCombiners,
-      new HashPartitioner(numPartitions))
+      new HashPartitioner(self.context.conf, numPartitions))
   }
 
   /**
@@ -184,7 +186,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
    */
   def aggregateByKey[U: ClassTag](zeroValue: U, numPartitions: Int)(seqOp: (U, V) => U,
       combOp: (U, U) => U): RDD[(K, U)] = self.withScope {
-    aggregateByKey(zeroValue, new HashPartitioner(numPartitions))(seqOp, combOp)
+    aggregateByKey(zeroValue, new HashPartitioner(self.context.conf, numPartitions))(seqOp, combOp)
   }
 
   /**
@@ -229,7 +231,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
    * (e.g., Nil for list concatenation, 0 for addition, or 1 for multiplication.).
    */
   def foldByKey(zeroValue: V, numPartitions: Int)(func: (V, V) => V): RDD[(K, V)] = self.withScope {
-    foldByKey(zeroValue, new HashPartitioner(numPartitions))(func)
+    foldByKey(zeroValue, new HashPartitioner(self.context.conf, numPartitions))(func)
   }
 
   /**
@@ -313,7 +315,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
    * to a "combiner" in MapReduce. Output will be hash-partitioned with numPartitions partitions.
    */
   def reduceByKey(func: (V, V) => V, numPartitions: Int): RDD[(K, V)] = self.withScope {
-    reduceByKey(new HashPartitioner(numPartitions), func)
+    reduceByKey(new HashPartitioner(self.context.conf, numPartitions), func)
   }
 
   /**
@@ -465,7 +467,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
   def countApproxDistinctByKey(
       relativeSD: Double,
       numPartitions: Int): RDD[(K, Long)] = self.withScope {
-    countApproxDistinctByKey(relativeSD, new HashPartitioner(numPartitions))
+    countApproxDistinctByKey(relativeSD, new HashPartitioner(self.context.conf, numPartitions))
   }
 
   /**
@@ -520,7 +522,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
    * key in memory. If a key has too many values, it can result in an `OutOfMemoryError`.
    */
   def groupByKey(numPartitions: Int): RDD[(K, Iterable[V])] = self.withScope {
-    groupByKey(new HashPartitioner(numPartitions))
+    groupByKey(new HashPartitioner(self.context.conf, numPartitions))
   }
 
   /**
@@ -656,7 +658,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
    * (k, v2) is in `other`. Performs a hash join across the cluster.
    */
   def join[W](other: RDD[(K, W)], numPartitions: Int): RDD[(K, (V, W))] = self.withScope {
-    join(other, new HashPartitioner(numPartitions))
+    join(other, new HashPartitioner(self.context.conf, numPartitions))
   }
 
   /**
@@ -678,7 +680,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
   def leftOuterJoin[W](
       other: RDD[(K, W)],
       numPartitions: Int): RDD[(K, (V, Option[W]))] = self.withScope {
-    leftOuterJoin(other, new HashPartitioner(numPartitions))
+    leftOuterJoin(other, new HashPartitioner(self.context.conf, numPartitions))
   }
 
   /**
@@ -700,7 +702,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
   def rightOuterJoin[W](
       other: RDD[(K, W)],
       numPartitions: Int): RDD[(K, (Option[V], W))] = self.withScope {
-    rightOuterJoin(other, new HashPartitioner(numPartitions))
+    rightOuterJoin(other, new HashPartitioner(self.context.conf, numPartitions))
   }
 
   /**
@@ -727,7 +729,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
   def fullOuterJoin[W](
       other: RDD[(K, W)],
       numPartitions: Int): RDD[(K, (Option[V], Option[W]))] = self.withScope {
-    fullOuterJoin(other, new HashPartitioner(numPartitions))
+    fullOuterJoin(other, new HashPartitioner(self.context.conf, numPartitions))
   }
 
   /**
@@ -859,7 +861,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
   def cogroup[W](
       other: RDD[(K, W)],
       numPartitions: Int): RDD[(K, (Iterable[V], Iterable[W]))] = self.withScope {
-    cogroup(other, new HashPartitioner(numPartitions))
+    cogroup(other, new HashPartitioner(self.context.conf, numPartitions))
   }
 
   /**
@@ -868,7 +870,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
    */
   def cogroup[W1, W2](other1: RDD[(K, W1)], other2: RDD[(K, W2)], numPartitions: Int)
       : RDD[(K, (Iterable[V], Iterable[W1], Iterable[W2]))] = self.withScope {
-    cogroup(other1, other2, new HashPartitioner(numPartitions))
+    cogroup(other1, other2, new HashPartitioner(self.context.conf, numPartitions))
   }
 
   /**
@@ -881,7 +883,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
       other3: RDD[(K, W3)],
       numPartitions: Int)
       : RDD[(K, (Iterable[V], Iterable[W1], Iterable[W2], Iterable[W3]))] = self.withScope {
-    cogroup(other1, other2, other3, new HashPartitioner(numPartitions))
+    cogroup(other1, other2, other3, new HashPartitioner(self.context.conf, numPartitions))
   }
 
   /** Alias for cogroup. */
@@ -908,7 +910,8 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
    * RDD will be less than or equal to us.
    */
   def subtractByKey[W: ClassTag](other: RDD[(K, W)]): RDD[(K, V)] = self.withScope {
-    subtractByKey(other, self.partitioner.getOrElse(new HashPartitioner(self.partitions.length)))
+    subtractByKey(other, self.partitioner.getOrElse(
+      new HashPartitioner(self.context.conf, self.partitions.length)))
   }
 
   /**
@@ -917,7 +920,7 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
   def subtractByKey[W: ClassTag](
       other: RDD[(K, W)],
       numPartitions: Int): RDD[(K, V)] = self.withScope {
-    subtractByKey(other, new HashPartitioner(numPartitions))
+    subtractByKey(other, new HashPartitioner(self.context.conf, numPartitions))
   }
 
   /**
@@ -935,14 +938,47 @@ class PairRDDFunctions[K, V](self: RDD[(K, V)])
     self.partitioner match {
       case Some(p) =>
         val index = p.getPartition(key)
-        val process = (it: Iterator[(K, V)]) => {
-          val buf = new ArrayBuffer[V]
-          for (pair <- it if pair._1 == key) {
-            buf += pair._2
+        val res = if (self.conf.isNeptuneCoroutinesEnabled()) {
+          // process coroutine implementation
+          val processCoFunc: (TaskContext, Iterator[(K, V)]) ~> (Int, Seq[V]) =
+            coroutine { (context: TaskContext, itr: Iterator[(K, V)]) => {
+              val buf = new ArrayBuffer[V]
+              while (itr.hasNext) {
+                if (context.isPaused()) {
+                  yieldval(0)
+                }
+                val pair = itr.next()
+                if (pair._1 == key) {
+                  buf += pair._2
+                }
+              }
+              buf.toSeq
+             }
+            }
+          self.context.runJob(self, processCoFunc, Array(index))
+        } else if (self.conf.isNeptuneThreadSyncEnabled()) {
+          val processThreadSyncFunc = (context: TaskContext, itr: Iterator[(K, V)]) => {
+            val buf = new ArrayBuffer[V]
+            while (itr.hasNext) {
+              self.checkSuspend(context)
+              val pair = itr.next()
+              if (pair._1 == key) {
+                buf += pair._2
+              }
+            }
+            buf.toSeq
           }
-          buf
-        } : Seq[V]
-        val res = self.context.runJob(self, process, Array(index))
+          self.context.runJob(self, processThreadSyncFunc, Array(index))
+        } else {
+          val process = (it: Iterator[(K, V)]) => {
+            val buf = new ArrayBuffer[V]
+            for (pair <- it if pair._1 == key) {
+              buf += pair._2
+            }
+            buf
+          }: Seq[V]
+          self.context.runJob(self, process, Array(index))
+        }
         res(0)
       case None =>
         self.filter(_._1 == key).map(_._2).collect()

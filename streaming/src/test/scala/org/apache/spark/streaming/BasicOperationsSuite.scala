@@ -464,7 +464,7 @@ class BasicOperationsSuite extends TestSuiteBase {
         Some(values.sum + state.getOrElse(0))
       }
       s.map(x => (x, 1)).updateStateByKey[Int](updateFunc,
-        new HashPartitioner (numInputPartitions), initialRDD)
+        new HashPartitioner (s.context.conf, numInputPartitions), initialRDD)
     }
 
     testOperation(inputData, updateStateOperation, outputData, true)
@@ -528,7 +528,7 @@ class BasicOperationsSuite extends TestSuiteBase {
         }
       }
       s.map(x => (x, 1)).updateStateByKey[StreamingState](updateFunc = updateFunc,
-        partitioner = new HashPartitioner (numInputPartitions), rememberPartitioner = false,
+        partitioner = new HashPartitioner (s.context.conf, numInputPartitions), rememberPartitioner = false,
         initialRDD = Option(initialRDD))
     }
 
@@ -568,7 +568,7 @@ class BasicOperationsSuite extends TestSuiteBase {
         iterator.flatMap(t => updateFunc(t._2, t._3).map(s => (t._1, s)))
       }
       s.map(x => (x, 1)).updateStateByKey[Int](newUpdateFunc,
-        new HashPartitioner (numInputPartitions), true, initialRDD)
+        new HashPartitioner (s.context.conf, numInputPartitions), true, initialRDD)
     }
 
     testOperation(inputData, updateStateOperation, outputData, true)

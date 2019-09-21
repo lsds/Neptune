@@ -20,6 +20,8 @@ package org.apache.spark
 import java.io.File
 import java.net.{MalformedURLException, URI}
 import java.nio.charset.StandardCharsets
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.concurrent.{Semaphore, TimeUnit}
 
 import scala.concurrent.duration._
@@ -33,11 +35,182 @@ import org.apache.hadoop.mapreduce.lib.input.{TextInputFormat => NewTextInputFor
 import org.scalatest.Matchers._
 import org.scalatest.concurrent.Eventually
 
-import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart, SparkListenerTaskEnd, SparkListenerTaskStart}
+import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart, SparkListenerTaskEnd, SparkListenerTaskPaused, SparkListenerTaskResumed, SparkListenerTaskStart}
 import org.apache.spark.util.{ThreadUtils, Utils}
 
 
 class SparkContextSuite extends SparkFunSuite with LocalSparkContext with Eventually {
+
+  // Launches one task that will pause and resume. Once the SparkListener detects the task has
+  // started, it will try to pause and then resume it.
+  // In the test we can also measure reaction time which includes Listener propagation time
+  test("Neptune pause/resume Coroutine task") {
+    val conf: SparkConf = new SparkConf().setAppName("test").setMaster("local")
+    conf.set("spark.scheduler.mode", "NEPTUNE")
+    conf.enableNeptuneCoroutines()
+    conf.enableNeptuneManualScheduling()
+    sc = new SparkContext(conf)
+
+    SparkContextSuite.isTaskStarted = false
+    SparkContextSuite.taskPaused = false
+    SparkContextSuite.taskSucceeded = false
+    var pauseStart: Long = 0L
+    var pausedCount: Int = 0
+
+    val listener = new SparkListener {
+      override def onTaskStart(taskStart: SparkListenerTaskStart): Unit = {
+//        eventually(timeout(5.seconds)) {
+//          assert(SparkContextSuite.isTaskStarted)
+//        }
+        if (taskStart.taskInfo.taskId != 2L) {
+          return
+        }
+        Thread.sleep(20)
+        if (!SparkContextSuite.taskPaused) {
+          SparkContextSuite.taskPaused = true
+          // scalastyle:off
+          println(s"Marking task: ${taskStart.taskInfo.taskId} to be paused")
+          pauseStart = System.nanoTime()
+          sc.pauseTaskAttempt(taskStart.taskInfo.taskId, false)
+        }
+      }
+
+      override def onTaskPaused(taskPaused: SparkListenerTaskPaused): Unit = {
+        // scalastyle:off
+        val sdf = new SimpleDateFormat("HH:mm:ss.SSS")
+        println(s"${sdf.format(new Date())} Pausing Took: ${(System.nanoTime() - pauseStart) / 1e6} ms")
+        pausedCount += 1
+        println(s"Resuming: ${taskPaused.taskInfo.taskId}")
+        sc.resumeTaskAttempt(taskPaused.taskInfo.taskId)
+      }
+
+      override def onTaskResumed(taskResumed: SparkListenerTaskResumed): Unit = {
+        // scalastyle:off
+        val sdf = new SimpleDateFormat("HH:mm:ss.SSS")
+        println(s"${sdf.format(new Date())} Pausing: ${taskResumed.taskInfo.taskId} again")
+        SparkContextSuite.taskPaused = false
+        pauseStart = System.nanoTime()
+        sc.pauseTaskAttempt(taskResumed.taskInfo.taskId)
+      }
+
+      override def onTaskEnd(taskEnd: SparkListenerTaskEnd): Unit = {
+        if (taskEnd.taskInfo.attemptNumber == 0 && taskEnd.reason == Success) {
+          SparkContextSuite.taskSucceeded = true
+        }
+      }
+    }
+    val rddSize = 100000
+    sc.addSparkListener(listener)
+    eventually(timeout(20.seconds)) {
+//      val coRDD = sc.parallelize(1 to rddSize, numSlices = 1).map(x => (x, x))
+//      val coRDD2 = sc.parallelize(1 to rddSize, numSlices = 1).map(x => (x, x+1))
+//      println(coRDD.join(coRDD2).count)
+      val coRDD = sc.parallelize(1 to rddSize, numSlices = 1)
+      coRDD.foreach { x =>
+        import java.text.SimpleDateFormat
+        val sdf = new SimpleDateFormat("HH:mm:ss.SSS")
+        println(s"${sdf.format(new Date())} Here ${x}")
+        // first task attempt (0) will pause, resume and then end
+        if (!SparkContextSuite.isTaskStarted) {
+          SparkContextSuite.isTaskStarted = true
+        }
+        try {
+          Thread.sleep(10)
+        } catch {
+          case e: InterruptedException =>
+        }
+      }
+    }
+    eventually(timeout(10.seconds)) {
+      assert(SparkContextSuite.taskSucceeded)
+      // Total - (First + Last Tasks)
+      assert(rddSize - pausedCount  <= 5)
+    }
+  }
+
+  test("Neptune pause/resume ThreadSync task") {
+    val conf: SparkConf = new SparkConf().setAppName("test").setMaster("local")
+    conf.set("spark.scheduler.mode", "NEPTUNE")
+    conf.enableNeptuneThreadSync()
+    conf.enableNeptuneManualScheduling()
+    sc = new SparkContext(conf)
+
+    SparkContextSuite.isTaskStarted = false
+    SparkContextSuite.taskPaused = false
+    SparkContextSuite.taskSucceeded = false
+    var pauseStart: Long = 0L
+    var pausedCount: Int = 0
+
+    val listener = new SparkListener {
+      override def onTaskStart(taskStart: SparkListenerTaskStart): Unit = {
+//        eventually(timeout(5.seconds)) {
+//          assert(SparkContextSuite.isTaskStarted)
+//        }
+        if (taskStart.taskInfo.taskId != 0L) {
+          return
+        }
+        Thread.sleep(20)
+        if (!SparkContextSuite.taskPaused) {
+          SparkContextSuite.taskPaused = true
+          // scalastyle:off
+          println(s"Marking TID: ${taskStart.taskInfo.taskId} to be paused")
+          pauseStart = System.nanoTime()
+          sc.pauseTaskAttempt(taskStart.taskInfo.taskId, false)
+        }
+      }
+
+      override def onTaskPaused(taskPaused: SparkListenerTaskPaused): Unit = {
+        // scalastyle:off
+        val sdf = new SimpleDateFormat("HH:mm:ss.SSS")
+        println(s"${sdf.format(new Date())} Pausing Took: ${(System.nanoTime() - pauseStart) / 1e6} ms")
+        pausedCount += 1
+        println(s"Resuming TID: ${taskPaused.taskInfo.taskId}")
+        sc.resumeTaskAttempt(taskPaused.taskInfo.taskId)
+      }
+
+      override def onTaskResumed(taskResumed: SparkListenerTaskResumed): Unit = {
+        // scalastyle:off
+        val sdf = new SimpleDateFormat("HH:mm:ss.SSS")
+        println(s"${sdf.format(new Date())} Pausing TID: ${taskResumed.taskInfo.taskId} again")
+        SparkContextSuite.taskPaused = false
+        pauseStart = System.nanoTime()
+        sc.pauseTaskAttempt(taskResumed.taskInfo.taskId)
+      }
+
+      override def onTaskEnd(taskEnd: SparkListenerTaskEnd): Unit = {
+        if (taskEnd.taskInfo.attemptNumber == 0 && taskEnd.reason == Success) {
+          SparkContextSuite.taskSucceeded = true
+        }
+      }
+    }
+    val rddSize = 1000
+    sc.addSparkListener(listener)
+    eventually(timeout(20.seconds)) {
+      val threadSyncRDD = sc.parallelize(1 to rddSize, numSlices = 1)
+//      val coRDD = sc.parallelize(1 to rddSize, numSlices = 1).map(x => (x, x))
+//      val coRDD2 = sc.parallelize(1 to rddSize, numSlices = 1).map(x => (x, x+1))
+//      println(coRDD.join(coRDD2).count)
+      threadSyncRDD.foreach { x =>
+        import java.text.SimpleDateFormat
+        val sdf = new SimpleDateFormat("HH:mm:ss.SSS")
+        println(s"${sdf.format(new Date())} Here ${x}")
+        // first task attempt (0) will pause, resume and then end
+        if (!SparkContextSuite.isTaskStarted) {
+          SparkContextSuite.isTaskStarted = true
+        }
+        try {
+          Thread.sleep(10)
+        } catch {
+          case e: InterruptedException =>
+        }
+      }
+    }
+    eventually(timeout(10.seconds)) {
+      assert(SparkContextSuite.taskSucceeded)
+      // Total - (First + Last Tasks)
+      assert(rddSize - pausedCount  <= 5)
+    }
+  }
 
   test("Only one SparkContext may be active at a time") {
     // Regression test for SPARK-4180
@@ -641,6 +814,8 @@ object SparkContextSuite {
   @volatile var cancelStage = false
   @volatile var isTaskStarted = false
   @volatile var taskKilled = false
+  @volatile var taskPaused = false
   @volatile var taskSucceeded = false
+  @volatile var taskSucceededCount = 0L
   val semaphore = new Semaphore(0)
 }

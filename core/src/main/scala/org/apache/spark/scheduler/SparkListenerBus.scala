@@ -39,6 +39,10 @@ private[spark] trait SparkListenerBus
         listener.onJobEnd(jobEnd)
       case taskStart: SparkListenerTaskStart =>
         listener.onTaskStart(taskStart)
+      case taskPaused: SparkListenerTaskPaused =>
+        listener.onTaskPaused(taskPaused)
+      case taskResumed: SparkListenerTaskResumed =>
+        listener.onTaskResumed(taskResumed)
       case taskGettingResult: SparkListenerTaskGettingResult =>
         listener.onTaskGettingResult(taskGettingResult)
       case taskEnd: SparkListenerTaskEnd =>
@@ -57,6 +61,8 @@ private[spark] trait SparkListenerBus
         listener.onApplicationEnd(applicationEnd)
       case metricsUpdate: SparkListenerExecutorMetricsUpdate =>
         listener.onExecutorMetricsUpdate(metricsUpdate)
+      case stageExecutorMetrics: SparkListenerStageExecutorMetrics =>
+        listener.onStageExecutorMetrics(stageExecutorMetrics)
       case executorAdded: SparkListenerExecutorAdded =>
         listener.onExecutorAdded(executorAdded)
       case executorRemoved: SparkListenerExecutorRemoved =>

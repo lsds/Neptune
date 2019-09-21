@@ -44,7 +44,7 @@ class HadoopFileLinesReader(
     val hadoopAttemptContext = new TaskAttemptContextImpl(conf, attemptId)
     val reader = new LineRecordReader()
     reader.initialize(fileSplit, hadoopAttemptContext)
-    new RecordReaderIterator(reader)
+    new RecordReaderIterator(reader, null)
   }
 
   override def hasNext: Boolean = iterator.hasNext

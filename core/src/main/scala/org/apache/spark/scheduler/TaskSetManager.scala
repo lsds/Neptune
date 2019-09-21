@@ -94,6 +94,10 @@ private[spark] class TaskSetManager(
   val weight = 1
   val minShare = 0
   var priority = taskSet.priority
+  // Lower priority means more CRITICAL
+  var neptunePriority: Int = if (taskSet.properties != null  && taskSet.properties.get("neptune_pri") != null) {
+    Integer.parseInt(taskSet.properties.get("neptune_pri").toString)
+  } else 0
   var stageId = taskSet.stageId
   val name = "TaskSet_" + taskSet.id
   var parent: Pool = null
@@ -107,8 +111,10 @@ private[spark] class TaskSetManager(
   }
 
   private[scheduler] val runningTasksSet = new HashSet[Long]
+  private[scheduler] val pausedTasksSet = new HashSet[Long]
 
   override def runningTasks: Int = runningTasksSet.size
+  override def pausedTasks: Int = pausedTasksSet.size
 
   def someAttemptSucceeded(tid: Long): Boolean = {
     successful(taskInfos(tid).index)
@@ -134,7 +140,7 @@ private[spark] class TaskSetManager(
   // of failures.
   // Duplicates are handled in dequeueTaskFromList, which ensures that a
   // task hasn't already started running before launching it.
-  private val pendingTasksForExecutor = new HashMap[String, ArrayBuffer[Int]]
+  private[scheduler] val pendingTasksForExecutor = new HashMap[String, ArrayBuffer[Int]]
 
   // Set of pending tasks for each host. Similar to pendingTasksForExecutor,
   // but at host level.
@@ -147,14 +153,14 @@ private[spark] class TaskSetManager(
   private[scheduler] var pendingTasksWithNoPrefs = new ArrayBuffer[Int]
 
   // Set containing all pending tasks (also used as a stack, as above).
-  private val allPendingTasks = new ArrayBuffer[Int]
+  private var allPendingTasks = new ArrayBuffer[Int]
 
   // Tasks that can be speculated. Since these will be a small fraction of total
   // tasks, we'll just hold them in a HashSet.
   private[scheduler] val speculatableTasks = new HashSet[Int]
 
   // Task index, start and finish time for each task attempt (indexed by task ID)
-  private val taskInfos = new HashMap[Long, TaskInfo]
+  private[scheduler] val taskInfos = new HashMap[Long, TaskInfo]
 
   // Use a MedianHeap to record durations of successful tasks so we know when to launch
   // speculative tasks. This is only used when speculation is enabled, to avoid the overhead
@@ -243,7 +249,7 @@ private[spark] class TaskSetManager(
    * Return the pending tasks list for a given executor ID, or an empty list if
    * there is no map entry for that host
    */
-  private def getPendingTasksForExecutor(executorId: String): ArrayBuffer[Int] = {
+  private[spark] def getPendingTasksForExecutor(executorId: String): ArrayBuffer[Int] = {
     pendingTasksForExecutor.getOrElse(executorId, ArrayBuffer())
   }
 
@@ -466,8 +472,8 @@ private[spark] class TaskSetManager(
         // Do various bookkeeping
         copiesRunning(index) += 1
         val attemptNum = taskAttempts(index).size
-        val info = new TaskInfo(taskId, index, attemptNum, curTime,
-          execId, host, taskLocality, speculative)
+        val info = new TaskInfo(taskId, index, attemptNum, curTime, 0L,
+          execId, host, taskLocality, speculative, ArrayBuffer.empty[Long], ArrayBuffer.empty[Long])
         taskInfos(taskId) = info
         taskAttempts(index) = info :: taskAttempts(index)
         // Update our locality level for delay scheduling
@@ -503,6 +509,8 @@ private[spark] class TaskSetManager(
         val taskName = s"task ${info.id} in stage ${taskSet.id}"
         logInfo(s"Starting $taskName (TID $taskId, $host, executor ${info.executorId}, " +
           s"partition ${task.partitionId}, $taskLocality, ${serializedTask.limit()} bytes)")
+
+        info.resumeTimes+=(clock getTimeMillis())
 
         sched.dagScheduler.taskStarted(task, info)
         new TaskDescription(
@@ -721,6 +729,7 @@ private[spark] class TaskSetManager(
    */
   def handleSuccessfulTask(tid: Long, result: DirectTaskResult[_]): Unit = {
     val info = taskInfos(tid)
+    info.pauseTimes.+=(clock.getTimeMillis())
     val index = info.index
     info.markFinished(TaskState.FINISHED, clock.getTimeMillis())
     if (speculationEnabled) {
@@ -763,6 +772,35 @@ private[spark] class TaskSetManager(
     // here "result.value()" just returns the value and won't block other threads.
     sched.dagScheduler.taskEnded(tasks(index), Success, result.value(), result.accumUpdates, info)
     maybeFinishTaskSet()
+  }
+
+  /**
+   * ::Neptune:: Notifies the DAGScheduler that the task has been paused.
+   */
+  def handlePausedTask(tid: Long, serializedData: ByteBuffer): Unit = {
+    val info = taskInfos(tid)
+    info.pauseTimes.+=(clock.getTimeMillis())
+    val index = info.index
+    info.markPaused(TaskState.PAUSED)
+    info.pauseLatency = SparkEnv.get.serializer.newInstance().deserialize(serializedData)
+    addPausedTask(tid)
+    removeRunningTask(tid)
+    sched.dagScheduler.taskPaused(tasks(index), info)
+  }
+
+  /**
+   * ::Neptune:: Notifies the DAGScheduler that the task has been resumed.
+   */
+  def handleResumedTask(tid: Long, serializedData: ByteBuffer): Unit = {
+    val info = taskInfos(tid)
+    info.resumeTimes.+=(clock.getTimeMillis())
+    val index = info.index
+    // Reuse pauseTime field to store resume clock time
+    info.markPaused(TaskState.RUNNING)
+    info.resumeLatency = SparkEnv.get.serializer.newInstance().deserialize(serializedData)
+    addRunningTask(tid)
+    removePausedTask(tid)
+    sched.dagScheduler.taskResumed(tasks(index), info)
   }
 
   /**
@@ -890,10 +928,27 @@ private[spark] class TaskSetManager(
     }
   }
 
+  /** If the given task ID is not in the set of paused tasks, adds it.
+   *
+   * Used to keep track of the number of paused/running tasks, for enforcing scheduling policies.
+   */
+  def addPausedTask(tid: Long): Unit = {
+    if (pausedTasksSet.add(tid) && parent != null) {
+      parent.decreaseRunningTasks(1)
+    }
+  }
+
   /** If the given task ID is in the set of running tasks, removes it. */
   def removeRunningTask(tid: Long) {
     if (runningTasksSet.remove(tid) && parent != null) {
       parent.decreaseRunningTasks(1)
+    }
+  }
+
+  /** If the given task ID is in the set of paused tasks, removes it. */
+  def removePausedTask(tid: Long): Unit = {
+    if (pausedTasksSet.remove(tid) && parent != null) {
+      parent.decreasePausedTasks(1)
     }
   }
 
@@ -1038,6 +1093,19 @@ private[spark] class TaskSetManager(
 
   def executorAdded() {
     recomputeLocality()
+  }
+
+  def recomputePendingLists(): Unit = {
+    pendingTasksForExecutor.empty
+    pendingTasksForHost.empty
+    pendingTasksForRack.empty
+    pendingTasksWithNoPrefs = new ArrayBuffer[Int]
+    val previouslyPendingTasks = allPendingTasks.clone()
+    allPendingTasks = new ArrayBuffer[Int]
+
+    for (index <- previouslyPendingTasks) {
+      addPendingTask(index)
+    }
   }
 }
 

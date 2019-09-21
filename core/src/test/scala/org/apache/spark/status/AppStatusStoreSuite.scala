@@ -22,6 +22,8 @@ import org.apache.spark.status.api.v1.TaskMetricDistributions
 import org.apache.spark.util.Distribution
 import org.apache.spark.util.kvstore._
 
+import scala.collection.mutable.ArrayBuffer
+
 class AppStatusStoreSuite extends SparkFunSuite {
 
   private val uiQuantiles = Array(0.0, 0.25, 0.5, 0.75, 1.0)
@@ -98,7 +100,7 @@ class AppStatusStoreSuite extends SparkFunSuite {
       i, i, i, i, i, i, i.toString, i.toString, i.toString, i.toString, false, Nil, None,
       i, i, i, i, i, i, i, i, i, i,
       i, i, i, i, i, i, i, i, i, i,
-      i, i, i, i, stageId, attemptId)
+      i, i, i, i, stageId, attemptId, ArrayBuffer.empty[Long], ArrayBuffer.empty[Long], 0L)
   }
 
 }

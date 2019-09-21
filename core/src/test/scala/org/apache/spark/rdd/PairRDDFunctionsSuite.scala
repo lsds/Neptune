@@ -316,7 +316,7 @@ class PairRDDFunctionsSuite extends SparkFunSuite with SharedSparkContext {
     val rdd1 = sc.parallelize((1 to 1000).map(x => (x, x)), 1000)
     val rdd2 = sc
       .parallelize(Array((1, 1), (1, 2), (2, 1), (3, 1)))
-      .partitionBy(new HashPartitioner(10))
+      .partitionBy(new HashPartitioner(sc.conf, 10))
     val joined = rdd1.cogroup(rdd2)
     assert(joined.getNumPartitions == rdd1.getNumPartitions)
   }
@@ -326,7 +326,7 @@ class PairRDDFunctionsSuite extends SparkFunSuite with SharedSparkContext {
     val rdd1 = sc.parallelize((1 to 1000).map(x => (x, x)), 20)
     val rdd2 = sc
       .parallelize(Array((1, 1), (1, 2), (2, 1), (3, 1)))
-      .partitionBy(new HashPartitioner(10))
+      .partitionBy(new HashPartitioner(sc.conf, 10))
     val joined = rdd1.cogroup(rdd2)
     assert(joined.getNumPartitions == rdd2.getNumPartitions)
   }
@@ -350,7 +350,7 @@ class PairRDDFunctionsSuite extends SparkFunSuite with SharedSparkContext {
       sc.conf.set("spark.default.parallelism", "4")
       val rdd1 = sc.parallelize((1 to 1000).map(x => (x, x)), 20)
       val rdd2 = sc.parallelize(Array((1, 1), (1, 2), (2, 1), (3, 1)))
-        .partitionBy(new HashPartitioner(10))
+        .partitionBy(new HashPartitioner(sc.conf, 10))
       val joined = rdd1.cogroup(rdd2)
       assert(joined.getNumPartitions == rdd2.getNumPartitions)
     } finally {
@@ -365,7 +365,7 @@ class PairRDDFunctionsSuite extends SparkFunSuite with SharedSparkContext {
       sc.conf.set("spark.default.parallelism", "4")
       val rdd1 = sc.parallelize((1 to 1000).map(x => (x, x)), 1000)
       val rdd2 = sc.parallelize(Array((1, 1), (1, 2), (2, 1), (3, 1)))
-        .partitionBy(new HashPartitioner(10))
+        .partitionBy(new HashPartitioner(sc.conf, 10))
       val joined = rdd1.cogroup(rdd2)
       assert(joined.getNumPartitions == rdd2.getNumPartitions)
     } finally {

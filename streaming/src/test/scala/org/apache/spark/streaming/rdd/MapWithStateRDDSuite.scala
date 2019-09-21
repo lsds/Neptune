@@ -58,7 +58,7 @@ class MapWithStateRDDSuite extends SparkFunSuite with RDDCheckpointTester with B
 
   test("creation from pair RDD") {
     val data = Seq((1, "1"), (2, "2"), (3, "3"))
-    val partitioner = new HashPartitioner(10)
+    val partitioner = new HashPartitioner(sc.conf, 10)
     val rdd = MapWithStateRDD.createFromPairRDD[Int, Int, String, Int](
       sc.parallelize(data), partitioner, Time(123))
     assertRDD[Int, Int, String, Int](rdd, data.map { x => (x._1, x._2, 123)}.toSet, Set.empty)
@@ -201,7 +201,7 @@ class MapWithStateRDDSuite extends SparkFunSuite with RDDCheckpointTester with B
     val initStates = Seq(("k1", 0), ("k2", 0))
     val initTime = 123
     val initStateWthTime = initStates.map { x => (x._1, x._2, initTime) }.toSet
-    val partitioner = new HashPartitioner(2)
+    val partitioner = new HashPartitioner(sc.conf, 2)
     val initStateRDD = MapWithStateRDD.createFromPairRDD[String, Int, Int, Int](
       sc.parallelize(initStates), partitioner, Time(initTime)).persist()
     assertRDD(initStateRDD, initStateWthTime, Set.empty)
@@ -344,7 +344,7 @@ class MapWithStateRDDSuite extends SparkFunSuite with RDDCheckpointTester with B
 
   test("checkpointing empty state RDD") {
     val emptyStateRDD = MapWithStateRDD.createFromPairRDD[Int, Int, Int, Int](
-      sc.emptyRDD[(Int, Int)], new HashPartitioner(10), Time(0))
+      sc.emptyRDD[(Int, Int)], new HashPartitioner(sc.conf, 10), Time(0))
     emptyStateRDD.checkpoint()
     assert(emptyStateRDD.flatMap { _.stateMap.getAll() }.collect().isEmpty)
     val cpRDD = sc.checkpointFile[MapWithStateRDDRecord[Int, Int, Int]](

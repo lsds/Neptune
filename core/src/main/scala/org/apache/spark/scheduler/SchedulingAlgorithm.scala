@@ -17,6 +17,8 @@
 
 package org.apache.spark.scheduler
 
+import org.apache.spark.internal.Logging
+
 /**
  * An interface for sort algorithm
  * FIFO: FIFO algorithm between TaskSetManagers
@@ -25,6 +27,25 @@ package org.apache.spark.scheduler
 private[spark] trait SchedulingAlgorithm {
   def comparator(s1: Schedulable, s2: Schedulable): Boolean
 }
+
+
+private[spark] class NeptuneSchedulingAlgorithm extends SchedulingAlgorithm with Logging{
+  override def comparator(s1: Schedulable, s2: Schedulable): Boolean = {
+    logDebug(s"Neptune comparator scheduling priority s1: ${s1.neptunePriority}, s2: ${s2.neptunePriority}")
+
+    val priority1 = s1.neptunePriority
+    val priority2 = s2.neptunePriority
+    var res = math.signum(priority1 - priority2)
+    // if Neptune priorities are the same compare stageIds
+    if (res == 0) {
+      val stageId1 = s1.stageId
+      val stageId2 = s2.stageId
+      res = math.signum(stageId1 - stageId2)
+    }
+    res < 0
+  }
+}
+
 
 private[spark] class FIFOSchedulingAlgorithm extends SchedulingAlgorithm {
   override def comparator(s1: Schedulable, s2: Schedulable): Boolean = {

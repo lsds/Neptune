@@ -67,12 +67,12 @@ public class UnsafeShuffleWriterSuite {
   static final int NUM_PARTITITONS = 4;
   TestMemoryManager memoryManager;
   TaskMemoryManager taskMemoryManager;
-  final HashPartitioner hashPartitioner = new HashPartitioner(NUM_PARTITITONS);
+  SparkConf conf;
+  final HashPartitioner hashPartitioner = new HashPartitioner(conf, NUM_PARTITITONS);
   File mergedOutputFile;
   File tempDir;
   long[] partitionSizesInMergedFile;
   final LinkedList<File> spillFilesCreated = new LinkedList<>();
-  SparkConf conf;
   final Serializer serializer = new KryoSerializer(new SparkConf());
   TaskMetrics taskMetrics;
 

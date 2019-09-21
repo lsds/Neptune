@@ -263,6 +263,7 @@ final class EMLDAOptimizer extends LDAOptimizer {
 final class OnlineLDAOptimizer extends LDAOptimizer with Logging {
 
   // LDA common parameters
+  var lda: LDA = null
   private var k: Int = 0
   private var corpusSize: Long = 0
   private var vocabSize: Int = 0
@@ -414,6 +415,7 @@ final class OnlineLDAOptimizer extends LDAOptimizer with Logging {
   override private[clustering] def initialize(
       docs: RDD[(Long, Vector)],
       lda: LDA): OnlineLDAOptimizer = {
+    this.lda = lda
     this.k = lda.getK
     this.corpusSize = docs.count()
     this.vocabSize = docs.first()._2.size
@@ -473,32 +475,34 @@ final class OnlineLDAOptimizer extends LDAOptimizer with Logging {
                                         None
                                       }
 
-    val stats: RDD[(BDM[Double], Option[BDV[Double]], Long)] = batch.mapPartitions { docs =>
+    val stats: RDD[(BDM[Double], Option[BDV[Double]], Long, Long)] = batch.mapPartitions { docs =>
       val nonEmptyDocs = docs.filter(_._2.numNonzeros > 0)
 
       val stat = BDM.zeros[Double](k, vocabSize)
       val logphatPartOption = logphatPartOptionBase()
       var nonEmptyDocCount: Long = 0L
+      var wordsSeen = 0L
       nonEmptyDocs.foreach { case (_, termCounts: Vector) =>
         nonEmptyDocCount += 1
+        wordsSeen += termCounts.numNonzeros
         val (gammad, sstats, ids) = OnlineLDAOptimizer.variationalTopicInference(
           termCounts, expElogbetaBc.value, alpha, gammaShape, k)
         stat(::, ids) := stat(::, ids) + sstats
         logphatPartOption.foreach(_ += LDAUtils.dirichletExpectation(gammad))
       }
-      Iterator((stat, logphatPartOption, nonEmptyDocCount))
+      Iterator((stat, logphatPartOption, nonEmptyDocCount, wordsSeen))
     }
 
     val elementWiseSum = (
-        u: (BDM[Double], Option[BDV[Double]], Long),
-        v: (BDM[Double], Option[BDV[Double]], Long)) => {
+        u: (BDM[Double], Option[BDV[Double]], Long, Long),
+        v: (BDM[Double], Option[BDV[Double]], Long, Long)) => {
       u._1 += v._1
       u._2.foreach(_ += v._2.get)
-      (u._1, u._2, u._3 + v._3)
+      (u._1, u._2, u._3 + v._3, u._4 + v._4)
     }
 
-    val (statsSum: BDM[Double], logphatOption: Option[BDV[Double]], nonEmptyDocsN: Long) = stats
-      .treeAggregate((BDM.zeros[Double](k, vocabSize), logphatPartOptionBase(), 0L))(
+    val (statsSum: BDM[Double], logphatOption: Option[BDV[Double]], nonEmptyDocsN: Long, wordsSeen: Long) = stats
+      .treeAggregate((BDM.zeros[Double](k, vocabSize), logphatPartOptionBase(), 0L, 0L))(
         elementWiseSum, elementWiseSum
       )
 
@@ -510,6 +514,7 @@ final class OnlineLDAOptimizer extends LDAOptimizer with Logging {
       return this
     }
 
+    this.lda.setWordsProcessed(lda.getWordsProcessed() + wordsSeen)
     val batchResult = statsSum *:* expElogbeta.t
     // Note that this is an optimization to avoid batch.count
     val batchSize = (miniBatchFraction * corpusSize).ceil.toInt

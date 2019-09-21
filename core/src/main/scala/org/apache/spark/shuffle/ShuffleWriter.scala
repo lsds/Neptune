@@ -19,16 +19,36 @@ package org.apache.spark.shuffle
 
 import java.io.IOException
 
+import org.apache.spark.TaskContext
+import org.apache.spark.internal.Logging
 import org.apache.spark.scheduler.MapStatus
 
 /**
  * Obtained inside a map task to write out records to the shuffle system.
  */
-private[spark] abstract class ShuffleWriter[K, V] {
+private[spark] abstract class ShuffleWriter[K, V] extends Logging {
   /** Write a sequence of records to this task's output */
   @throws[IOException]
   def write(records: Iterator[Product2[K, V]]): Unit
 
   /** Close this writer, passing along whether the map completed */
   def stop(success: Boolean): Option[MapStatus]
+
+  /** Neptune ThreadSync wait/notify impl - same as RDD */
+  def checkSuspend(context: TaskContext): Unit = {
+    if (context.isPaused()) {
+      context.synchronized {
+        while (context.isPaused()) {
+          try {
+            context.setTaskPausedEndTime(System.nanoTime())
+            context.wait()
+          } catch {
+            case e: InterruptedException =>
+              logWarning("Suspendable Task interrupted")
+          }
+        }
+      }
+    }
+    context.setTaskResumedEndTime(System.nanoTime())
+  }
 }

@@ -21,6 +21,8 @@ import org.apache.spark.TaskState
 import org.apache.spark.TaskState.TaskState
 import org.apache.spark.annotation.DeveloperApi
 
+import scala.collection.mutable.ArrayBuffer
+
 /**
  * :: DeveloperApi ::
  * Information about a running task attempt inside a TaskSet.
@@ -35,10 +37,13 @@ class TaskInfo(
     val index: Int,
     val attemptNumber: Int,
     val launchTime: Long,
+    var stageSubmissionTime: Long,
     val executorId: String,
     val host: String,
     val taskLocality: TaskLocality.TaskLocality,
-    val speculative: Boolean) {
+    val speculative: Boolean,
+    val pauseTimes: ArrayBuffer[Long],
+    val resumeTimes: ArrayBuffer[Long]) {
 
   /**
    * The time when the task started remotely getting the result. Will not be set if the
@@ -64,11 +69,17 @@ class TaskInfo(
    * The time when the task has completed successfully (including the time to remotely fetch
    * results, if necessary).
    */
-  var finishTime: Long = 0
+  var finishTime: Long = 0L
+  // In nanoseconds
+  var pauseLatency: Long = 0L
+  // In nanoseconds
+  var resumeLatency: Long = 0L
 
   var failed = false
 
   var killed = false
+
+  var paused = false
 
   private[spark] def markGettingResult(time: Long) {
     gettingResultTime = time
@@ -82,6 +93,13 @@ class TaskInfo(
       failed = true
     } else if (state == TaskState.KILLED) {
       killed = true
+    }
+  }
+
+  private[spark] def markPaused(state: TaskState) {
+    // pauseTime should be set larger than 0, otherwise "paused" below will return false.
+    if (state == TaskState.PAUSED) {
+      paused = true
     }
   }
 
@@ -104,6 +122,8 @@ class TaskInfo(
       "FAILED"
     } else if (killed) {
       "KILLED"
+    } else if (paused) {
+      "PAUSED"
     } else if (successful) {
       "SUCCESS"
     } else {

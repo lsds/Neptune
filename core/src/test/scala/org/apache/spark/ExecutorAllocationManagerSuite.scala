@@ -18,15 +18,15 @@
 package org.apache.spark
 
 import scala.collection.mutable
-
 import org.scalatest.{BeforeAndAfter, PrivateMethodTester}
-
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.scheduler._
 import org.apache.spark.scheduler.ExternalClusterManager
-import org.apache.spark.scheduler.cluster.ExecutorInfo
+import org.apache.spark.scheduler.cluster.{ExecutorData, ExecutorInfo}
 import org.apache.spark.scheduler.local.LocalSchedulerBackend
 import org.apache.spark.util.ManualClock
+
+import scala.collection.mutable.ArrayBuffer
 
 /**
  * Test add and remove behavior of ExecutorAllocationManager.
@@ -1100,7 +1100,8 @@ private object ExecutorAllocationManagerSuite extends PrivateMethodTester {
       taskIndex: Int,
       executorId: String,
       speculative: Boolean = false): TaskInfo = {
-    new TaskInfo(taskId, taskIndex, 0, 0, executorId, "", TaskLocality.ANY, speculative)
+    new TaskInfo(taskId, taskIndex, 0, 0L, 0L, executorId, "", TaskLocality.ANY, speculative,
+      ArrayBuffer.empty[Long], ArrayBuffer.empty[Long])
   }
 
 
@@ -1282,4 +1283,5 @@ private class DummyLocalSchedulerBackend (sc: SparkContext, sb: SchedulerBackend
   override def killExecutorsOnHost(host: String): Boolean = {
     false
   }
+  override def getExecutorDataMap(): mutable.HashMap[String, ExecutorData] = null
 }

@@ -203,7 +203,8 @@ object ShuffleExchangeExec {
       newPartitioning: Partitioning,
       serializer: Serializer): ShuffleDependency[Int, InternalRow, InternalRow] = {
     val part: Partitioner = newPartitioning match {
-      case RoundRobinPartitioning(numPartitions) => new HashPartitioner(numPartitions)
+      case RoundRobinPartitioning(numPartitions) =>
+        new HashPartitioner(rdd.context.conf, numPartitions)
       case HashPartitioning(_, n) =>
         new Partitioner {
           override def numPartitions: Int = n

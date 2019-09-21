@@ -128,7 +128,7 @@ class VertexRDDSuite extends SparkFunSuite with LocalSparkContext {
     withSpark { sc =>
       val vertexA = VertexRDD(sc.parallelize(0 until 100, 2).map(i => (i.toLong, 1)))
       val vertexB = VertexRDD(
-        vertexA.filter(v => v._1 % 2 == 0).partitionBy(new HashPartitioner(3)))
+        vertexA.filter(v => v._1 % 2 == 0).partitionBy(new HashPartitioner(sc.conf, 3)))
       assert(vertexA.partitions.size != vertexB.partitions.size)
       val vertexC = vertexA.leftJoin(vertexB) { (vid, old, newOpt) =>
         old - newOpt.getOrElse(0)
@@ -155,7 +155,7 @@ class VertexRDDSuite extends SparkFunSuite with LocalSparkContext {
     withSpark { sc =>
       val vertexA = VertexRDD(sc.parallelize(0 until 100, 2).map(i => (i.toLong, 1)))
       val vertexB = VertexRDD(
-        vertexA.filter(v => v._1 % 2 == 0).partitionBy(new HashPartitioner(3)))
+        vertexA.filter(v => v._1 % 2 == 0).partitionBy(new HashPartitioner(sc.conf, 3)))
       assert(vertexA.partitions.size != vertexB.partitions.size)
       val vertexC = vertexA.innerJoin(vertexB) { (vid, old, newVal) =>
         old - newVal

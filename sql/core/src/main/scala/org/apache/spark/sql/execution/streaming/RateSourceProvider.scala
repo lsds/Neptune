@@ -137,6 +137,7 @@ class RateStreamSource(
   import RateStreamSource._
 
   val clock = if (useManualClock) new ManualClock else new SystemClock
+  var parallelism = numPartitions
 
   private val maxSeconds = Long.MaxValue / rowsPerSecond
 
@@ -196,6 +197,14 @@ class RateStreamSource(
     }
     Some(LongOffset(TimeUnit.MILLISECONDS.toSeconds(lastTimeMs - startTimeMs)))
   }
+  override def getBatch(start: Option[Offset], end: Offset, toAdapt: Boolean): DataFrame = {
+    if (toAdapt) {
+      logWarning(s"Adapting Source parallelism from ${parallelism} to ${parallelism*2}")
+      parallelism *= 2
+    }
+    logWarning(s"Partitions: ${parallelism}")
+    getBatch(start, end)
+  }
 
   override def getBatch(start: Option[Offset], end: Offset): DataFrame = {
     val startSeconds = start.flatMap(LongOffset.convert(_).map(_.offset)).getOrElse(0L)
@@ -223,7 +232,7 @@ class RateStreamSource(
     val relativeMsPerValue =
       TimeUnit.SECONDS.toMillis(endSeconds - startSeconds).toDouble / (rangeEnd - rangeStart)
 
-    val rdd = sqlContext.sparkContext.range(rangeStart, rangeEnd, 1, numPartitions).map { v =>
+    val rdd = sqlContext.sparkContext.range(rangeStart, rangeEnd, 1, parallelism).map { v =>
       val relative = math.round((v - rangeStart) * relativeMsPerValue)
       InternalRow(DateTimeUtils.fromMillis(relative + localStartTimeMs), v)
     }
@@ -233,7 +242,7 @@ class RateStreamSource(
   override def stop(): Unit = {}
 
   override def toString: String = s"RateSource[rowsPerSecond=$rowsPerSecond, " +
-    s"rampUpTimeSeconds=$rampUpTimeSeconds, numPartitions=$numPartitions]"
+    s"rampUpTimeSeconds=$rampUpTimeSeconds, numPartitions=$parallelism]"
 }
 
 object RateStreamSource {

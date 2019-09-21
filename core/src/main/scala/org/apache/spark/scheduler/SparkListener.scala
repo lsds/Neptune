@@ -24,12 +24,11 @@ import scala.collection.Map
 
 import com.fasterxml.jackson.annotation.JsonTypeInfo
 
-import org.apache.spark.{SparkConf, TaskEndReason}
+import org.apache.spark.TaskEndReason
 import org.apache.spark.annotation.DeveloperApi
-import org.apache.spark.executor.TaskMetrics
+import org.apache.spark.executor.{ExecutorMetrics, TaskMetrics}
 import org.apache.spark.scheduler.cluster.ExecutorInfo
 import org.apache.spark.storage.{BlockManagerId, BlockUpdatedInfo}
-import org.apache.spark.ui.SparkUI
 
 @DeveloperApi
 @JsonTypeInfo(use = JsonTypeInfo.Id.CLASS, include = JsonTypeInfo.As.PROPERTY, property = "Event")
@@ -46,7 +45,15 @@ case class SparkListenerStageSubmitted(stageInfo: StageInfo, properties: Propert
 case class SparkListenerStageCompleted(stageInfo: StageInfo) extends SparkListenerEvent
 
 @DeveloperApi
-case class SparkListenerTaskStart(stageId: Int, stageAttemptId: Int, taskInfo: TaskInfo)
+case class SparkListenerTaskStart(stageId: Int, stageAttemptId: Int, taskInfo: TaskInfo, stageIdStr: String = null, stageRDD: String = null)
+  extends SparkListenerEvent
+
+@DeveloperApi
+case class SparkListenerTaskPaused(stageId: Int, stageAttemptId: Int, taskInfo: TaskInfo)
+  extends SparkListenerEvent
+
+@DeveloperApi
+case class SparkListenerTaskResumed(stageId: Int, stageAttemptId: Int, taskInfo: TaskInfo)
   extends SparkListenerEvent
 
 @DeveloperApi
@@ -142,11 +149,29 @@ case class SparkListenerBlockUpdated(blockUpdatedInfo: BlockUpdatedInfo) extends
  * Periodic updates from executors.
  * @param execId executor id
  * @param accumUpdates sequence of (taskId, stageId, stageAttemptId, accumUpdates)
+ * @param executorUpdates executor level metrics updates
  */
 @DeveloperApi
 case class SparkListenerExecutorMetricsUpdate(
     execId: String,
-    accumUpdates: Seq[(Long, Int, Int, Seq[AccumulableInfo])])
+    accumUpdates: Seq[(Long, Int, Int, Seq[AccumulableInfo])],
+    executorUpdates: Option[ExecutorMetrics] = None)
+  extends SparkListenerEvent
+
+/**
+ * Peak metric values for the executor for the stage, written to the history log at stage
+ * completion.
+ * @param execId executor id
+ * @param stageId stage id
+ * @param stageAttemptId stage attempt
+ * @param executorMetrics executor level metrics, indexed by ExecutorMetricType.values
+ */
+@DeveloperApi
+case class SparkListenerStageExecutorMetrics(
+    execId: String,
+    stageId: Int,
+    stageAttemptId: Int,
+    executorMetrics: ExecutorMetrics)
   extends SparkListenerEvent
 
 @DeveloperApi
@@ -189,6 +214,16 @@ private[spark] trait SparkListenerInterface {
    * Called when a task starts
    */
   def onTaskStart(taskStart: SparkListenerTaskStart): Unit
+
+  /**
+   * Called when a task is paused
+   */
+  def onTaskPaused(taskPaused: SparkListenerTaskPaused): Unit
+
+  /**
+   * Called when a task is resumed
+   */
+  def onTaskResumed(taskResumed: SparkListenerTaskResumed): Unit
 
   /**
    * Called when a task begins remotely fetching its result (will not be called for tasks that do
@@ -245,6 +280,13 @@ private[spark] trait SparkListenerInterface {
    * Called when the driver receives task metrics from an executor in a heartbeat.
    */
   def onExecutorMetricsUpdate(executorMetricsUpdate: SparkListenerExecutorMetricsUpdate): Unit
+
+  /**
+   * Called with the peak memory metrics for a given (executor, stage) combination. Note that this
+   * is only present when reading from the event log (as in the history server), and is never
+   * called in a live application.
+   */
+  def onStageExecutorMetrics(executorMetrics: SparkListenerStageExecutorMetrics): Unit
 
   /**
    * Called when the driver registers a new executor.
@@ -308,6 +350,10 @@ abstract class SparkListener extends SparkListenerInterface {
 
   override def onTaskStart(taskStart: SparkListenerTaskStart): Unit = { }
 
+  override def onTaskPaused(taskPaused: SparkListenerTaskPaused): Unit = {}
+
+  override def onTaskResumed(taskResumed: SparkListenerTaskResumed): Unit = {}
+
   override def onTaskGettingResult(taskGettingResult: SparkListenerTaskGettingResult): Unit = { }
 
   override def onTaskEnd(taskEnd: SparkListenerTaskEnd): Unit = { }
@@ -331,6 +377,8 @@ abstract class SparkListener extends SparkListenerInterface {
 
   override def onExecutorMetricsUpdate(
       executorMetricsUpdate: SparkListenerExecutorMetricsUpdate): Unit = { }
+
+  override def onStageExecutorMetrics(executorMetrics: SparkListenerStageExecutorMetrics): Unit = { }
 
   override def onExecutorAdded(executorAdded: SparkListenerExecutorAdded): Unit = { }
 

@@ -77,6 +77,7 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   private final int shuffleId;
   private final int mapId;
   private final TaskContext taskContext;
+  private final boolean isSuspendable;
   private final SparkConf sparkConf;
   private final boolean transferToEnabled;
   private final int initialSortBufferSize;
@@ -140,6 +141,7 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     this.partitioner = dep.partitioner();
     this.writeMetrics = taskContext.taskMetrics().shuffleWriteMetrics();
     this.taskContext = taskContext;
+    this.isSuspendable = (taskContext.isPausable() && !taskContext.isCoroutine());
     this.sparkConf = sparkConf;
     this.transferToEnabled = sparkConf.getBoolean("spark.file.transferTo", true);
     this.initialSortBufferSize = sparkConf.getInt("spark.shuffle.sort.initialBufferSize",
@@ -185,6 +187,10 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     boolean success = false;
     try {
       while (records.hasNext()) {
+        // Neptune notify suspension
+        if (this.isSuspendable) {
+          checkSuspend(taskContext);
+        }
         insertRecordIntoSorter(records.next());
       }
       closeAndWriteOutput();
@@ -381,6 +387,10 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
             inputBufferSizeInBytes);
       }
       for (int partition = 0; partition < numPartitions; partition++) {
+        // Neptune notify suspension
+        if (this.isSuspendable) {
+          checkSuspend(taskContext);
+        }
         final long initialFileLength = mergedFileOutputStream.getByteCount();
         // Shield the underlying output stream from close() and flush() calls, so that we can close
         // the higher level streams to make sure all data is really flushed and internal state is
@@ -451,6 +461,10 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       long bytesWrittenToMergedFile = 0;
       for (int partition = 0; partition < numPartitions; partition++) {
         for (int i = 0; i < spills.length; i++) {
+          // Neptune notify suspension
+          if (this.isSuspendable) {
+            checkSuspend(taskContext);
+          }
           final long partitionLengthInSpill = spills[i].partitionLengths[partition];
           final FileChannel spillInputChannel = spillInputChannels[i];
           final long writeStartTime = System.nanoTime();

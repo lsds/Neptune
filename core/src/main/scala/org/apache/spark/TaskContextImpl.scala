@@ -18,10 +18,10 @@
 package org.apache.spark
 
 import java.util.Properties
+
 import javax.annotation.concurrent.GuardedBy
 
 import scala.collection.mutable.ArrayBuffer
-
 import org.apache.spark.executor.TaskMetrics
 import org.apache.spark.internal.Logging
 import org.apache.spark.memory.TaskMemoryManager
@@ -29,6 +29,7 @@ import org.apache.spark.metrics.MetricsSystem
 import org.apache.spark.metrics.source.Source
 import org.apache.spark.shuffle.FetchFailedException
 import org.apache.spark.util._
+import org.coroutines.<~>
 
 /**
  * A [[TaskContext]] implementation.
@@ -50,7 +51,9 @@ private[spark] class TaskContextImpl(
     localProperties: Properties,
     @transient private val metricsSystem: MetricsSystem,
     // The default value is only used in tests.
-    override val taskMetrics: TaskMetrics = TaskMetrics.empty)
+    override val taskMetrics: TaskMetrics = TaskMetrics.empty,
+    override val isPausable: Boolean = false,
+    override val isCoroutine: Boolean = false)
   extends TaskContext
   with Logging {
 
@@ -62,6 +65,18 @@ private[spark] class TaskContextImpl(
 
   // If defined, the corresponding task has been killed and this option contains the reason.
   @volatile private var reasonIfKilled: Option[String] = None
+
+  /**
+   * ::Neptune::
+   * Whether a task has been paused.
+   */
+  private var paused: Boolean = false
+  private var coInstance: Any <~> Any = null
+
+  private var pausedStartTime: Long = _
+  private var pausedEndTime: Long = _
+  private var resumedStartTime: Long = _
+  private var resumedEndTime: Long = _
 
   // Whether the task has completed.
   private var completed: Boolean = false
@@ -177,5 +192,46 @@ private[spark] class TaskContextImpl(
   }
 
   private[spark] def fetchFailed: Option[FetchFailedException] = _fetchFailedException
+
+  /** ::Neptune:: Mark a cooperative task as paused */
+  @GuardedBy("this")
+  private[spark] override def markPaused(toPause: Boolean): Unit = synchronized {
+    // Calling pause/resume again on the same task should not affect the startTimes
+    if (paused == toPause) return
+    if (toPause) {
+      pausedStartTime = System.nanoTime()
+    }
+    else {
+      resumedStartTime = System.nanoTime()
+    }
+    paused = toPause
+  }
+
+  @GuardedBy("this")
+  override def isPaused(): Boolean = synchronized (paused)
+
+  @GuardedBy("this")
+  override private[spark] def getTaskPausedStartTime(): Long = synchronized(pausedStartTime)
+
+  @GuardedBy("this")
+  override private[spark] def setTaskPausedEndTime(time: Long): Unit = synchronized(pausedEndTime = time)
+
+  @GuardedBy("this")
+  override private[spark] def getTaskPausedEndTime(): Long = synchronized(pausedEndTime)
+
+  @GuardedBy("this")
+  override private[spark] def getTaskResumedStartTime(): Long = synchronized(resumedStartTime)
+
+  @GuardedBy("this")
+  override private[spark] def setTaskResumedEndTime(time: Long): Unit = synchronized(resumedEndTime = time)
+
+  @GuardedBy("this")
+  override private[spark] def getTaskResumedEndTime(): Long = synchronized(resumedEndTime)
+
+  @GuardedBy("this")
+  private[spark] override def getcoInstance(): Any <~> Any = synchronized(coInstance)
+
+  @GuardedBy("this")
+  private[spark] override def setCoInstance(co: Any <~> Any): Unit = synchronized(coInstance = co)
 
 }

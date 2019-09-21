@@ -27,6 +27,8 @@ import org.apache.spark.metrics.source.Source
 import org.apache.spark.shuffle.FetchFailedException
 import org.apache.spark.util.{AccumulatorV2, TaskCompletionListener, TaskFailureListener}
 
+import org.coroutines.<~>
+
 
 object TaskContext {
   /**
@@ -195,6 +197,29 @@ abstract class TaskContext extends Serializable {
    * If the task is interrupted, throws TaskKilledException with the reason for the interrupt.
    */
   private[spark] def killTaskIfInterrupted(): Unit
+
+  /**
+   * ::Neptune::
+   * Cooperative Task context API
+   */
+  private[spark] def isPausable(): Boolean
+  private[spark] def isCoroutine(): Boolean
+  private[spark] def markPaused(toPause: Boolean): Unit
+  // Needs to accessible for submitting custom Coroutine functions
+  def isPaused(): Boolean
+  // Always accessed from a thread safe (synchronized) environment
+  private[spark] def setTaskPausedEndTime(time: Long)
+  private[spark] def getTaskPausedEndTime(): Long
+
+  private[spark] def getTaskPausedStartTime(): Long
+
+  private[spark] def setTaskResumedEndTime(time: Long)
+  private[spark] def getTaskResumedEndTime(): Long
+
+  private[spark] def getTaskResumedStartTime(): Long
+
+  private[spark] def getcoInstance(): Any <~> Any
+  private[spark] def setCoInstance(co: Any <~> Any): Unit
 
   /**
    * If the task is interrupted, the reason this task was killed, otherwise None.

@@ -289,7 +289,8 @@ class JavaPairRDD[K, V](val rdd: RDD[(K, V)])
       mergeValue: JFunction2[C, V, C],
       mergeCombiners: JFunction2[C, C, C],
       numPartitions: Int): JavaPairRDD[K, C] =
-    combineByKey(createCombiner, mergeValue, mergeCombiners, new HashPartitioner(numPartitions))
+    combineByKey(createCombiner, mergeValue, mergeCombiners,
+      new HashPartitioner(this.rdd.context.conf, numPartitions))
 
   /**
    * Merge the values for each key using an associative and commutative reduce function. This will

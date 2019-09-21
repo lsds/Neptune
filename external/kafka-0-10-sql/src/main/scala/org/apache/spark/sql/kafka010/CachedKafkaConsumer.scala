@@ -67,7 +67,7 @@ private[kafka010] case class CachedKafkaConsumer private(
     case ut: UninterruptibleThread =>
       ut.runUninterruptibly(body)
     case _ =>
-      logWarning("CachedKafkaConsumer is not running in UninterruptibleThread. " +
+      logDebug("CachedKafkaConsumer is not running in UninterruptibleThread. " +
         "It may hang when CachedKafkaConsumer's methods are interrupted because of KAFKA-1894")
       body
   }

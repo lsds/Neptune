@@ -21,6 +21,7 @@ import java.{util => ju}
 
 import org.apache.kafka.clients.producer.{Callback, KafkaProducer, ProducerRecord, RecordMetadata}
 
+import org.apache.spark.TaskContext
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions.{Attribute, Cast, Literal, UnsafeProjection}
 import org.apache.spark.sql.types.{BinaryType, StringType}
@@ -31,11 +32,11 @@ import org.apache.spark.sql.types.{BinaryType, StringType}
  * automatically trigger task aborts.
  */
 private[kafka010] class KafkaWriteTask(
-    producerConfiguration: ju.Map[String, Object],
+    val producerConfiguration: ju.Map[String, Object],
     inputSchema: Seq[Attribute],
     topic: Option[String]) extends KafkaRowWriter(inputSchema, topic) {
   // used to synchronize with Kafka callbacks
-  private var producer: KafkaProducer[Array[Byte], Array[Byte]] = _
+  private[spark] var producer: KafkaProducer[Array[Byte], Array[Byte]] = _
 
   /**
    * Writes key value data out to topics.
@@ -46,6 +47,32 @@ private[kafka010] class KafkaWriteTask(
       val currentRow = iterator.next()
       sendRow(currentRow, producer)
     }
+  }
+
+  def execute(iterator: Iterator[InternalRow], context: TaskContext): Unit = {
+    producer = CachedKafkaProducer.getOrCreate(producerConfiguration)
+    while (iterator.hasNext && failedWrite == null) {
+      checkSuspend(context)
+      val currentRow = iterator.next()
+      sendRow(currentRow, producer)
+    }
+  }
+
+  /** Neptune ThreadSync wait/notify impl */
+  def checkSuspend(context: TaskContext): Unit = {
+    if (context.isPaused()) {
+      context.synchronized {
+        while (context.isPaused()) {
+          try {
+            context.setTaskPausedEndTime(System.nanoTime())
+            context.wait()
+          } catch {
+            case e: InterruptedException =>
+          }
+        }
+      }
+    }
+    context.setTaskResumedEndTime(System.nanoTime())
   }
 
   def close(): Unit = {
@@ -62,7 +89,7 @@ private[kafka010] abstract class KafkaRowWriter(
     inputSchema: Seq[Attribute], topic: Option[String]) {
 
   // used to synchronize with Kafka callbacks
-  @volatile protected var failedWrite: Exception = _
+  @volatile var failedWrite: Exception = _
   protected val projection = createProjection
 
   private val callback = new Callback() {
@@ -78,7 +105,7 @@ private[kafka010] abstract class KafkaRowWriter(
    * to failedWrite. Note that send is asynchronous; subclasses must flush() their producer before
    * assuming the row is in Kafka.
    */
-  protected def sendRow(
+  protected[spark] def sendRow(
       row: InternalRow, producer: KafkaProducer[Array[Byte], Array[Byte]]): Unit = {
     val projectedRow = projection(row)
     val topic = projectedRow.getUTF8String(0)

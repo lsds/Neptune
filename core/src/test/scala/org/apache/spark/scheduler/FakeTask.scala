@@ -25,13 +25,16 @@ import org.apache.spark.executor.TaskMetrics
 class FakeTask(
     stageId: Int,
     partitionId: Int,
-    prefLocs: Seq[TaskLocation] = Nil,
+    var prefLocs: Seq[TaskLocation] = Nil,
     serializedTaskMetrics: Array[Byte] =
       SparkEnv.get.closureSerializer.newInstance().serialize(TaskMetrics.registered).array())
   extends Task[Int](stageId, 0, partitionId, new Properties, serializedTaskMetrics) {
 
   override def runTask(context: TaskContext): Int = 0
   override def preferredLocations: Seq[TaskLocation] = prefLocs
+  override def addPreferredLocation(taskLocation: TaskLocation): Unit = {
+    prefLocs = taskLocation +: prefLocs
+  }
 }
 
 object FakeTask {
@@ -56,6 +59,25 @@ object FakeTask {
       new FakeTask(stageId, i, if (prefLocs.size != 0) prefLocs(i) else Nil)
     }
     new TaskSet(tasks, stageId, stageAttemptId, priority = 0, null)
+  }
+
+  def createTaskSet(numTasks: Int, stageId: Int, stageAttemptId: Int, props: Properties, prefLocs: Seq[TaskLocation]*):
+  TaskSet = {
+    if (prefLocs.size != 0 && prefLocs.size != numTasks) {
+      throw new IllegalArgumentException("Wrong number of task locations")
+    }
+    val tasks = Array.tabulate[Task[_]](numTasks) { i =>
+      new FakeTask(stageId, i, if (prefLocs.size != 0) prefLocs(i) else Nil)
+    }
+    new TaskSet(tasks, stageId, stageAttemptId, priority = 0, props)
+  }
+
+  def createTaskSetWithUnevenLocationPreference(numTasks: Int, stageId: Int, stageAttemptId: Int, props: Properties, prefLocs: Seq[TaskLocation]*):
+  TaskSet = {
+    val tasks = Array.tabulate[Task[_]](numTasks) { i =>
+      new FakeTask(stageId, i, if (prefLocs.size > i) prefLocs(i) else Nil)
+    }
+    new TaskSet(tasks, stageId, stageAttemptId, priority = 0, props)
   }
 
   def createShuffleMapTaskSet(

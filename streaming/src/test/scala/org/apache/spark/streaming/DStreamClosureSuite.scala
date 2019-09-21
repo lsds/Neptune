@@ -134,7 +134,7 @@ class DStreamClosureSuite extends SparkFunSuite with BeforeAndAfterAll {
     val reduceF = (_: Int, _: Int) => { return; 1 }
     expectCorrectException { ds.reduceByKey(reduceF) }
     expectCorrectException { ds.reduceByKey(reduceF, 5) }
-    expectCorrectException { ds.reduceByKey(reduceF, new HashPartitioner(5)) }
+    expectCorrectException { ds.reduceByKey(reduceF, new HashPartitioner(ssc.conf, 5)) }
   }
   private def testCombineByKey(ds: DStream[(Int, Int)]): Unit = {
     expectCorrectException {
@@ -142,7 +142,7 @@ class DStreamClosureSuite extends SparkFunSuite with BeforeAndAfterAll {
         { _: Int => return; 1 },
         { case (_: Int, _: Int) => return; 1 },
         { case (_: Int, _: Int) => return; 1 },
-        new HashPartitioner(5)
+        new HashPartitioner(ssc.conf, 5)
       )
     }
   }
@@ -153,12 +153,12 @@ class DStreamClosureSuite extends SparkFunSuite with BeforeAndAfterAll {
     expectCorrectException { ds.reduceByKeyAndWindow(reduceF, Seconds(1), Seconds(2)) }
     expectCorrectException { ds.reduceByKeyAndWindow(reduceF, Seconds(1), Seconds(2), 5) }
     expectCorrectException {
-      ds.reduceByKeyAndWindow(reduceF, Seconds(1), Seconds(2), new HashPartitioner(5))
+      ds.reduceByKeyAndWindow(reduceF, Seconds(1), Seconds(2), new HashPartitioner(ssc.conf, 5))
     }
     expectCorrectException { ds.reduceByKeyAndWindow(reduceF, reduceF, Seconds(2)) }
     expectCorrectException {
       ds.reduceByKeyAndWindow(
-        reduceF, reduceF, Seconds(2), Seconds(3), new HashPartitioner(5), filterF)
+        reduceF, reduceF, Seconds(2), Seconds(3), new HashPartitioner(ssc.conf, 5), filterF)
     }
   }
   private def testUpdateStateByKey(ds: DStream[(Int, Int)]): Unit = {
@@ -171,20 +171,20 @@ class DStreamClosureSuite extends SparkFunSuite with BeforeAndAfterAll {
     val initialRDD = ds.ssc.sparkContext.emptyRDD[Int].map { i => (i, i) }
     expectCorrectException { ds.updateStateByKey(updateF1) }
     expectCorrectException { ds.updateStateByKey(updateF1, 5) }
-    expectCorrectException { ds.updateStateByKey(updateF1, new HashPartitioner(5)) }
+    expectCorrectException { ds.updateStateByKey(updateF1, new HashPartitioner(ssc.conf, 5)) }
     expectCorrectException {
-      ds.updateStateByKey(updateF1, new HashPartitioner(5), initialRDD)
+      ds.updateStateByKey(updateF1, new HashPartitioner(ssc.conf, 5), initialRDD)
     }
     expectCorrectException {
-      ds.updateStateByKey(updateF2, new HashPartitioner(5), true)
+      ds.updateStateByKey(updateF2, new HashPartitioner(ssc.conf, 5), true)
     }
     expectCorrectException {
-      ds.updateStateByKey(updateF2, new HashPartitioner(5), true, initialRDD)
+      ds.updateStateByKey(updateF2, new HashPartitioner(ssc.conf, 5), true, initialRDD)
     }
     expectCorrectException {
       ds.updateStateByKey(
         updateFunc = updateF3,
-        partitioner = new HashPartitioner(5),
+        partitioner = new HashPartitioner(ssc.conf, 5),
         rememberPartitioner = true,
         initialRDD = Option(initialRDD)
       )

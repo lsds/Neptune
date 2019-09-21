@@ -123,8 +123,13 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
         if (TaskState.isFinished(state)) {
           executorDataMap.get(executorId) match {
             case Some(executorInfo) =>
-              executorInfo.freeCores += scheduler.CPUS_PER_TASK
-              makeOffers(executorId)
+              // Avoid corner case where task transitions from PAUSED to FINISHED immediately
+              if (scheduler.sc.conf.isNeptuneManualSchedulingEnabled() || !scheduler.pausedTaskIds.contains(taskId)) {
+                executorInfo.freeCores += scheduler.CPUS_PER_TASK
+                makeOffers(executorId)
+              } else {
+                logDebug("Avoiding double offered resources")
+              }
             case None =>
               // Ignoring the update since we don't know about the executor.
               logWarning(s"Ignored task status update ($taskId state $state) " +
@@ -143,6 +148,31 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
           case None =>
             // Ignoring the task kill since the executor is not registered.
             logWarning(s"Attempted to kill task $taskId for unknown executor $executorId.")
+        }
+
+      case PauseTask(taskId, executorId, interruptThread) =>
+        logDebug(s"DriverEndpoint Received PauseTask ${taskId} exec: ${executorId}")
+        executorDataMap.get(executorId) match {
+          case Some(executorInfo) =>
+            executorInfo.executorEndpoint.send(PauseTask(taskId, executorId, interruptThread))
+            if (!scheduler.sc.conf.isNeptuneManualSchedulingEnabled()) {
+              executorInfo.freeCores += scheduler.CPUS_PER_TASK
+            }
+          case None =>
+            // Ignoring the task PAUSE Event since the executor is not registered.
+            logWarning(s"Attempted to pause task $taskId for unknown executor $executorId.")
+        }
+
+      case ResumeTask(taskId, executorId) =>
+        executorDataMap.get(executorId) match {
+          case Some(executorInfo) =>
+            executorInfo.executorEndpoint.send(ResumeTask(taskId, executorId))
+            if (!scheduler.sc.conf.isNeptuneManualSchedulingEnabled()) {
+              executorInfo.freeCores -= scheduler.CPUS_PER_TASK
+            }
+          case None =>
+            // Ignoring the task RESUME Event since the executor is not registered.
+            logWarning(s"Attempted to resume task $taskId for unknown executor $executorId.")
         }
 
       case KillExecutorsOnHost(host) =>
@@ -189,7 +219,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
           addressToExecutorId(executorAddress) = executorId
           totalCoreCount.addAndGet(cores)
           totalRegisteredExecutors.addAndGet(1)
-          val data = new ExecutorData(executorRef, executorAddress, hostname,
+          val data = new ExecutorData(executorRef, executorAddress, executorId, hostname,
             cores, cores, logUrls)
           // This must be synchronized because variables mutated
           // in this block are read when requesting executors
@@ -237,7 +267,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
     // Make fake resource offers on all executors
     private def makeOffers() {
       // Make sure no executor is killed while some task is launching on it
-      val taskDescs = CoarseGrainedSchedulerBackend.this.synchronized {
+      val taskDescs = withLock {
         // Filter out executors under killing
         val activeExecutors = executorDataMap.filterKeys(executorIsAlive)
         val workOffers = activeExecutors.map {
@@ -262,7 +292,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
     // Make fake resource offers on just one executor
     private def makeOffers(executorId: String) {
       // Make sure no executor is killed while some task is launching on it
-      val taskDescs = CoarseGrainedSchedulerBackend.this.synchronized {
+      val taskDescs = withLock {
         // Filter out executors under killing
         if (executorIsAlive(executorId)) {
           val executorData = executorDataMap(executorId)
@@ -452,6 +482,18 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
     driverEndpoint.send(KillTask(taskId, executorId, interruptThread, reason))
   }
 
+  override def pauseTask(
+     taskId: Long, executorId: String, interruptThread: Boolean): Unit = {
+    logDebug(s"Sending pauseEvent for ${taskId} to ${executorId}")
+    driverEndpoint.send(PauseTask(taskId, executorId, interruptThread))
+  }
+
+  override def resumeTask(
+     taskId: Long, executorId: String): Unit = {
+    logDebug(s"Sending resumeEvent for ${taskId} to ${executorId}")
+    driverEndpoint.send((ResumeTask(taskId, executorId)))
+  }
+
   override def defaultParallelism(): Int = {
     conf.getInt("spark.default.parallelism", math.max(totalCoreCount.get(), 2))
   }
@@ -484,6 +526,8 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
     }
     false
   }
+
+  override def getExecutorDataMap(): HashMap[String, ExecutorData] = executorDataMap
 
   /**
    * Return the number of executors currently registered with this backend.
@@ -599,7 +643,7 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
       force: Boolean): Seq[String] = {
     logInfo(s"Requesting to kill executor(s) ${executorIds.mkString(", ")}")
 
-    val response = synchronized {
+    val response = withLock {
       val (knownExecutors, unknownExecutors) = executorIds.partition(executorDataMap.contains)
       unknownExecutors.foreach { id =>
         logWarning(s"Executor to kill $id does not exist!")
@@ -676,6 +720,14 @@ class CoarseGrainedSchedulerBackend(scheduler: TaskSchedulerImpl, val rpcEnv: Rp
   }
 
   protected def fetchHadoopDelegationTokens(): Option[Array[Byte]] = { None }
+
+  // SPARK-27112: We need to ensure that there is ordering of lock acquisition
+  // between TaskSchedulerImpl and CoarseGrainedSchedulerBackend objects in order to fix
+  // the deadlock issue exposed in SPARK-27112
+  private def withLock[T](fn: => T): T = scheduler.synchronized {
+    CoarseGrainedSchedulerBackend.this.synchronized { fn }
+  }
+
 }
 
 private[spark] object CoarseGrainedSchedulerBackend {

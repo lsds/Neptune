@@ -109,6 +109,12 @@ case class MemoryStream[A : Encoder](id: Int, sqlContext: SQLContext)
     }
   }
 
+  override def getBatch(start: Option[Offset], end: Offset, toAdapt: Boolean): DataFrame = {
+    log.warn(s"Adaptive partitioning not Implemented yet for: ${toString}")
+    log.warn(s"Called with: ${start}-${end}  ${toAdapt}")
+    getBatch(start, end)
+  }
+
   override def getBatch(start: Option[Offset], end: Offset): DataFrame = {
     // Compute the internal batch numbers to fetch: [startOrdinal, endOrdinal)
     val startOrdinal =

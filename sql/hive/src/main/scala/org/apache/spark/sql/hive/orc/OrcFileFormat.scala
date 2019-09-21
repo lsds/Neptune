@@ -161,7 +161,7 @@ class OrcFileFormat extends FileFormat with DataSourceRegister with Serializable
           new SparkOrcNewRecordReader(orcReader, conf, fileSplit.getStart, fileSplit.getLength)
         }
 
-        val recordsIterator = new RecordReaderIterator[OrcStruct](orcRecordReader)
+        val recordsIterator = new RecordReaderIterator[OrcStruct](orcRecordReader, TaskContext.get())
         Option(TaskContext.get()).foreach(_.addTaskCompletionListener(_ => recordsIterator.close()))
 
         // Unwraps `OrcStruct`s to `UnsafeRow`s

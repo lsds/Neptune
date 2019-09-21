@@ -109,6 +109,52 @@ class SparkConfSuite extends SparkFunSuite with LocalSparkContext with ResetSyst
     assert(conf.getOption("k4") === None)
   }
 
+  test("test Neptune conf") {
+    val conf = new SparkConf(false)
+    assert(conf.getAll.toSet === Set())
+    // Coroutine Tasks Disabled by default
+    assert(conf.isNeptuneCoroutinesEnabled() === false)
+    conf.enableNeptuneCoroutines()
+    assert(conf.isNeptuneCoroutinesEnabled() === true)
+    conf.disableNeptuneCoroutines()
+    assert(conf.isNeptuneCoroutinesEnabled() === false)
+
+    // Two-Level Disabled by default
+    assert(conf.isNeptuneTwoLevelSchedulingEnabled === false)
+    conf.enableNeptuneTwoLevelScheduling(5)
+    assert(conf.isNeptuneTwoLevelSchedulingEnabled === true)
+    assert(conf.getNeptuneTwoLevelSchedulingNum() === 5)
+
+    // Task Policy PAUSE by default
+    assert(conf.getNeptuneTaskPolicy() === TaskState.PAUSED)
+    conf.setNeptuneTaskPolicy("kill")
+    assert(conf.getNeptuneTaskPolicy() === TaskState.KILLED)
+    conf.setNeptuneTaskPolicy("blah")
+    assert(conf.getNeptuneTaskPolicy() === TaskState.PAUSED)
+    conf.setNeptuneTaskPolicy("")
+    assert(conf.getNeptuneTaskPolicy() === TaskState.PAUSED)
+  }
+
+  test(" Test Neptune invalid conf") {
+    val conf = new SparkConf(false)
+    assert(conf.getAll.toSet === Set())
+    // Coroutine Tasks Disabled by default
+    assert(conf.isNeptuneCoroutinesEnabled() === false)
+    // ThreadSync Tasks Disabled by default
+    assert(conf.isNeptuneThreadSyncEnabled() === false)
+
+    // Enable one of Coroutines/ThreadSync
+    conf.enableNeptuneCoroutines()
+    assert(conf.isNeptuneCoroutinesEnabled() === true)
+    assert(conf.isNeptuneThreadSyncEnabled() === false)
+    conf.disableNeptuneCoroutines()
+    conf.enableNeptuneThreadSync()
+    assert(conf.isNeptuneThreadSyncEnabled() === true)
+    assert(conf.isNeptuneCoroutinesEnabled() === false)
+    // Now ThreadSync is enabled - failure case
+    intercept[SparkException] { conf.enableNeptuneCoroutines() }
+  }
+
   test("creating SparkContext without master and app name") {
     val conf = new SparkConf(false)
     intercept[SparkException] { sc = new SparkContext(conf) }

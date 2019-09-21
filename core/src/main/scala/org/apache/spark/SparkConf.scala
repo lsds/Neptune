@@ -425,6 +425,173 @@ class SparkConf(loadDefaults: Boolean) extends Cloneable with Logging with Seria
    */
   def getAppId: String = get("spark.app.id")
 
+  /**
+   * Neptune Project Extra configuration
+   */
+
+  def enableNeptuneThreadSync(): Unit = {
+    if (contains("spark.neptune.task.coroutines")) {
+      get("spark.neptune.task.coroutines") match {
+        case "false" =>
+        case "true" => throw new SparkException("spark.neptune.task can only be \"threadsync\" or " +
+          "\"coroutines\".")
+      }
+    }
+    set("spark.neptune.task.threadsync", true.toString)
+  }
+
+  def enableNeptuneCoroutines(): Unit = {
+    if (contains("spark.neptune.task.threadsync")) {
+      get("spark.neptune.task.threadsync") match {
+        case "false" =>
+        case "true" => throw new SparkException("spark.neptune.task can only be \"threadsync\" or " +
+          "\"coroutines\".")
+      }
+    }
+    set("spark.neptune.task.coroutines", true.toString)
+  }
+
+  def disableNeptuneCoroutines(): Unit = {
+    set("spark.neptune.task.coroutines", false.toString)
+  }
+
+  def disableNeptuneThreadsync(): Unit = {
+    set("spark.neptune.task.threadsync", false.toString)
+  }
+
+  def isNeptuneCoroutinesEnabled(): Boolean = {
+    getOption("spark.neptune.task.coroutines") match {
+      case Some("true") => true
+      case Some("false") => false
+      case _ => false
+    }
+  }
+
+  def isNeptuneThreadSyncEnabled(): Boolean = {
+    getOption("spark.neptune.task.threadsync") match {
+      case Some("true") => true
+      case Some("false") => false
+      case _ => false
+    }
+  }
+
+  def isNeptuneSuspensionEnabled(): Boolean = {
+    return isNeptuneCoroutinesEnabled() || isNeptuneThreadSyncEnabled()
+  }
+
+  def setNeptuneSchedulingPolicy(schedulingPolicy: String): Unit = {
+    set("spark.neptune.scheduling.policy", schedulingPolicy)
+  }
+
+  def getNeptuneSchedulingPolicy(): NeptunePolicy.NeptunePolicy = {
+    getOption("spark.neptune.scheduling.policy") match {
+      case Some("random") => NeptunePolicy.RANDOM
+      case Some("r") => NeptunePolicy.RANDOM
+      case Some("load_balance") => NeptunePolicy.LOAD_BALANCE
+      case Some("lb") => NeptunePolicy.LOAD_BALANCE
+      case Some("cache_local") => NeptunePolicy.CACHE_LOCAL_BALANCE
+      case Some("cl") => NeptunePolicy.CACHE_LOCAL_BALANCE
+      case Some("cache_local_balance") => NeptunePolicy.CACHE_LOCAL_BALANCE
+      case Some("clb") => NeptunePolicy.CACHE_LOCAL_BALANCE
+      case Some("location_memory_aware") => NeptunePolicy.LOCATION_MEMORY_AWARE
+      case Some("lma") => NeptunePolicy.LOCATION_MEMORY_AWARE
+      case Some("cache_bucket_balance") => NeptunePolicy.CACHE_BUCKET_BALANCE
+      case Some("cbb") => NeptunePolicy.CACHE_BUCKET_BALANCE
+      case _ => NeptunePolicy.LOAD_BALANCE
+    }
+  }
+
+  def setLMAWindowSize(windowSize: Int): Unit = {
+    set("spark.neptune.lma.window", windowSize.toString)
+  }
+
+  def getLMAWindowSize(): Int = {
+    getOption("spark.neptune.lma.window") match {
+      case Some(string) => string.toInt
+      case _ => 1
+    }
+  }
+
+  def setLMABucketSizePercentage(bucketSizePercentage: Int): Unit = {
+    set("spark.neptune.lma.bucket.percentage", bucketSizePercentage.toString)
+  }
+
+  def getLMABucketSizePercentage(): Int = {
+    getOption("spark.neptune.lma.bucket.percentage") match {
+      case Some(string) => string.toInt
+      case _ => 1
+    }
+  }
+
+  def setLMABucketSizeMB(bucketSizeMB: Int): Unit = {
+    set("spark.neptune.lma.bucket.mb", bucketSizeMB.toString)
+  }
+
+  def getLMABucketSizeMB(): Int = {
+    getOption("spark.neptune.lma.bucket.mb") match {
+      case Some(string) => string.toInt
+      case _ => 1
+    }
+  }
+
+  def setLMAIgnore(toIgnore: Boolean): Unit = {
+    set("spark.neptune.lma.missing.ignore", toIgnore.toString)
+  }
+
+  def getLMAMissingIgnore(): Boolean = {
+    getOption("spark.neptune.lma.missing.ignore") match {
+      case Some("true") => true
+      case Some("false") => false
+      case _ => false
+    }
+  }
+
+  def setNeptuneTaskPolicy(taskPolicy: String): Unit = {
+    set("spark.neptune.task.policy", taskPolicy)
+  }
+
+  def getNeptuneTaskPolicy(): TaskState.TaskState = {
+    getOption("spark.neptune.task.policy") match {
+      case Some("pause") => TaskState.PAUSED
+      case Some("kill") => TaskState.KILLED
+      case _ => TaskState.PAUSED
+    }
+  }
+
+  def enableNeptuneManualScheduling(): Unit = {
+    set("spark.neptune.task.manual.scheduling", true.toString)
+  }
+
+  def disableNeptuneManualScheduling(): Unit = {
+    set("spark.neptune.task.manual.scheduling", false.toString)
+  }
+
+  def isNeptuneManualSchedulingEnabled(): Boolean = {
+    getOption("spark.neptune.task.manual.scheduling") match {
+      case Some("true") => true
+      case Some("false") => false
+      case _ => false
+    }
+  }
+
+  def enableNeptuneTwoLevelScheduling(nschedulers: Int): Unit = {
+    set("spark.neptune.schedulers", s"$nschedulers")
+  }
+
+  def isNeptuneTwoLevelSchedulingEnabled: Boolean = {
+    getOption("spark.neptune.schedulers") match {
+      case Some(n) => true
+      case None => false
+    }
+  }
+
+  def getNeptuneTwoLevelSchedulingNum(): Int = {
+    getOption("spark.neptune.schedulers") match {
+      case Some(n) => n.toInt
+      case None => 0
+    }
+  }
+
   /** Does the configuration contain a given parameter? */
   def contains(key: String): Boolean = {
     settings.containsKey(key) ||
